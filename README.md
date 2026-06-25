@@ -57,12 +57,6 @@ DATABASE_URL=postgresql://postgres:<YOUR-PASSWORD>@db.<project-ref>.supabase.co:
 
 Replace `<YOUR-PASSWORD>` with your database password. SSL is enabled in `server.js` for cloud databases.
 
-Optional (for future Supabase client SDK use):
-
-```env
-NEXT_PUBLIC_SUPABASE_URL=https://<project-ref>.supabase.co
-```
-
 ## Run locally
 
 ```bash
