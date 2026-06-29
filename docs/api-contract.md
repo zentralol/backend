@@ -1,13 +1,21 @@
-# Zentra API Contract v1.0 - Full Project Version
+# Zentra API Contract v1.0 - Project API Contract
 
 Project: COMP47360 Team 10 - Zentra  
 Backend scope: Express.js API, PostgreSQL, prediction/ML integration, GenAI explanation integration  
 Clients: Web frontend, SwiftUI mobile app, optional admin/planning view  
-Contract status: Full project team-sharing contract  
+Contract status: Team-facing API contract with current implementation notes
+Last reviewed against backend implementation: 2026-06-29
 
 ## 1. Project Scope
 
-This contract defines the API surface needed for the full Zentra project. It separates endpoints by implementation priority so backend, web, mobile, ML, and product teammates can share one source of truth:
+This contract defines the API surface needed for the Zentra project. It is both:
+
+- the target API shape that frontend, mobile, backend, ML, and product teammates can plan around; and
+- a snapshot of what the current Express backend already implements.
+
+The backend currently implements only the health check, location search, and location detail endpoints. The remaining MVP endpoints are planned contract targets, not proof that code exists yet.
+
+### Product priority
 
 | Status | Meaning |
 |---|---|
@@ -16,13 +24,26 @@ This contract defines the API surface needed for the full Zentra project. It sep
 | `FUTURE` | Full-project extension endpoint for later implementation |
 | `INTERNAL` | Backend-to-ML or backend-only service contract |
 
-Full project API count:
+### Implementation state
+
+| State | Meaning |
+|---|---|
+| `IMPLEMENTED` | Available in the current Express backend |
+| `PLANNED` | Target API shape, but not implemented yet |
+| `FUTURE_SCOPE` | Later product extension, not needed for MVP |
+| `INTERNAL_OPTION` | Optional backend-to-ML boundary; not called by web/mobile clients |
+
+API count:
 
 | Group | Count | Notes |
 |---|---:|---|
-| Core public MVP endpoints | 12 | Main web/mobile product flow |
-| Optional/future/admin endpoints | 4 | Shared for full-project planning |
+| Current implemented public endpoints | 3 | Health, location search, and location detail |
+| Required public MVP target endpoints | 10 | Main web/mobile product flow; includes implemented endpoints |
+| Optional public MVP target endpoints | 3 | Useful, but should not block the core flow |
+| Future/admin endpoints | 3 | Shared for full-project planning |
 | Internal ML integration options | 2 | Optional backend-to-ML service boundary; file-based handoff is also supported |
+
+Target counts include endpoints that may already be implemented. Use the endpoint summary table below to see current implementation state.
 
 ## 2. Base URLs
 
@@ -193,36 +214,50 @@ Validation:
 
 ### 6.3 LocationSummary
 
+Current backend response:
+
 ```json
 {
-  "id": "loc_123",
-  "externalId": "osm_node_123456",
+  "id": "123456",
+  "externalId": "osm_123456",
   "name": "Times Square",
   "type": "attraction",
-  "address": "Manhattan, New York, NY",
-  "borough": "Manhattan",
   "coordinates": {
     "lat": 40.758,
     "lng": -73.9855
   },
-  "distanceMeters": 450
+  "zoneId": "zone_midtown"
 }
 ```
 
+Planned enriched fields, when data is available:
+
+- `address`
+- `borough`
+- `distanceMeters`
+
 ### 6.4 LocationDetail
+
+Current backend response:
 
 ```json
 {
-  "id": "loc_123",
-  "externalId": "osm_node_123456",
+  "id": "123456",
+  "externalId": "osm_123456",
   "name": "Times Square",
   "type": "attraction",
-  "address": "Manhattan, New York, NY",
-  "borough": "Manhattan",
   "coordinates": {
     "lat": 40.758,
     "lng": -73.9855
   },
+  "zoneId": "zone_midtown"
+}
+```
+
+Planned enriched location detail fields:
+
+```json
+{
   "tags": ["tourist", "outdoor", "landmark"],
   "accessibility": {
     "wheelchairAccessible": true,
@@ -260,7 +295,7 @@ This object can be passed inline to prediction/recommendation endpoints. For the
 ```json
 {
   "predictionId": "pred_123",
-  "locationId": "loc_123",
+  "locationId": "123456",
   "targetTime": "2026-07-01T15:00:00-04:00",
   "durationMinutes": 60,
   "busynessScore": 82,
@@ -303,7 +338,7 @@ Score interpretation:
   "title": "Try Bryant Park instead",
   "reason": "It is nearby and predicted to be less crowded at the selected time.",
   "location": {
-    "id": "loc_456",
+    "id": "654321",
     "name": "Bryant Park",
     "type": "park",
     "coordinates": {
@@ -321,34 +356,36 @@ Score interpretation:
 
 ## 7. Endpoint Summary
 
-| # | Method | Path | Status | Main client |
-|---:|---|---|---|---|
-| 1 | GET | `/health` | `MVP_REQUIRED` | All |
-| 2 | POST | `/sessions` | `MVP_REQUIRED` | Web/mobile |
-| 3 | GET | `/locations/search` | `MVP_REQUIRED` | Web/mobile |
-| 4 | GET | `/locations/{locationId}` | `MVP_REQUIRED` | Web/mobile |
-| 5 | GET | `/locations/nearby` | `MVP_REQUIRED` | Web/mobile map |
-| 6 | POST | `/predictions` | `MVP_REQUIRED` | Web/mobile |
-| 7 | POST | `/predictions/batch` | `MVP_REQUIRED` | Map/heatmap |
-| 8 | GET | `/locations/{locationId}/forecast` | `MVP_REQUIRED` | Web/mobile |
-| 9 | POST | `/recommendations` | `MVP_REQUIRED` | Web/mobile |
-| 10 | POST | `/explanations` | `MVP_REQUIRED` | Web/mobile |
-| 11 | POST | `/feedback` | `MVP_REQUIRED` | Web/mobile |
-| 12 | GET | `/map/heatmap` | `MVP_OPTIONAL` | Web map |
-| 13 | PUT | `/sessions/{sessionId}/preferences` | `MVP_OPTIONAL` | Web/mobile |
-| 14 | POST | `/chat/messages` | `FUTURE` | Web/mobile |
-| 15 | POST | `/routes/safety-aware` | `FUTURE` | Mobile |
-| 16 | GET | `/admin/stats/predictions` | `FUTURE` | Admin |
-| 17 | POST | `/internal/ml/predict-busyness` | `INTERNAL` | Backend |
-| 18 | POST | `/internal/ml/predict-busyness-batch` | `INTERNAL` | Backend |
+| # | Method | Path | Product priority | Implementation state | Main client |
+|---:|---|---|---|---|---|
+| 1 | GET | `/health` | `MVP_REQUIRED` | `IMPLEMENTED` | All |
+| 2 | GET | `/locations/search` | `MVP_REQUIRED` | `IMPLEMENTED` | Web/mobile |
+| 3 | GET | `/locations/{locationId}` | `MVP_REQUIRED` | `IMPLEMENTED` | Web/mobile |
+| 4 | GET | `/locations/nearby` | `MVP_REQUIRED` | `PLANNED` | Web/mobile map |
+| 5 | POST | `/predictions` | `MVP_REQUIRED` | `PLANNED` | Web/mobile |
+| 6 | POST | `/predictions/batch` | `MVP_REQUIRED` | `PLANNED` | Map/heatmap |
+| 7 | GET | `/locations/{locationId}/forecast` | `MVP_REQUIRED` | `PLANNED` | Web/mobile |
+| 8 | POST | `/recommendations` | `MVP_REQUIRED` | `PLANNED` | Web/mobile |
+| 9 | POST | `/explanations` | `MVP_REQUIRED` | `PLANNED` | Web/mobile |
+| 10 | POST | `/feedback` | `MVP_REQUIRED` | `PLANNED` | Web/mobile |
+| 11 | POST | `/sessions` | `MVP_OPTIONAL` | `PLANNED` | Web/mobile |
+| 12 | GET | `/map/heatmap` | `MVP_OPTIONAL` | `PLANNED` | Web map |
+| 13 | PUT | `/sessions/{sessionId}/preferences` | `MVP_OPTIONAL` | `PLANNED` | Web/mobile |
+| 14 | POST | `/chat/messages` | `FUTURE` | `FUTURE_SCOPE` | Web/mobile |
+| 15 | POST | `/routes/safety-aware` | `FUTURE` | `FUTURE_SCOPE` | Mobile |
+| 16 | GET | `/admin/stats/predictions` | `FUTURE` | `FUTURE_SCOPE` | Admin |
+| 17 | POST | `/internal/ml/predict-busyness` | `INTERNAL` | `INTERNAL_OPTION` | Backend |
+| 18 | POST | `/internal/ml/predict-busyness-batch` | `INTERNAL` | `INTERNAL_OPTION` | Backend |
 
-## 8. Public MVP Endpoints
+## 8. Public MVP Target Endpoints
 
 ### 8.1 Health Check
 
 `GET /health`
 
 Status: `MVP_REQUIRED`
+
+Implementation state: `IMPLEMENTED`
 
 Response `200`:
 
@@ -358,8 +395,7 @@ Response `200`:
   "data": {
     "status": "ok",
     "apiVersion": "v1",
-    "database": "ok",
-    "predictionService": "ok",
+    "database": "connected",
     "uptimeSeconds": 3600
   },
   "meta": {
@@ -368,16 +404,25 @@ Response `200`:
 }
 ```
 
+Note: `predictionService` should be added only after the ML integration has a service or batch job health signal.
+
 ### 8.2 Create Anonymous Session
 
 `POST /sessions`
 
-Status: `MVP_REQUIRED`
+Status: `MVP_OPTIONAL`
+
+Implementation state: `PLANNED`
 
 Purpose:
 
 - Store temporary onboarding/preferences without user accounts.
 - Allows recommendation and explanation endpoints to personalize responses.
+
+MVP note:
+
+- This should not block the core prediction flow because `UserContext` can be passed inline to prediction and recommendation endpoints.
+- Implement this when the app needs persistent onboarding state, preference updates, or multi-step sessions.
 
 Request:
 
@@ -431,15 +476,17 @@ Validation:
 
 Status: `MVP_REQUIRED`
 
+Implementation state: `IMPLEMENTED`
+
 Query parameters:
 
 | Name | Required | Example | Rule |
 |---|---:|---|---|
-| `q` | yes | `museum` | 2-100 characters |
+| `q` | no in current backend; recommended for UX | `museum` | Current backend allows empty search; target UX should use 2-100 characters |
 | `type` | no | `cafe` | Must be `LocationType` |
 | `limit` | no | `10` | Default 10, max 50 |
-| `lat` | no | `40.758` | If present, `lng` must also be present |
-| `lng` | no | `-73.9855` | If present, `lat` must also be present |
+| `lat` | no | `40.758` | Planned for distance sorting; not used by current backend |
+| `lng` | no | `-73.9855` | Planned for distance sorting; not used by current backend |
 
 Response `200`:
 
@@ -450,22 +497,26 @@ Response `200`:
     "query": "museum",
     "results": [
       {
-        "id": "loc_123",
-        "externalId": "osm_node_123456",
+        "id": "123456",
+        "externalId": "osm_123456",
         "name": "Museum of Modern Art",
         "type": "museum",
-        "address": "11 W 53rd St, New York, NY",
-        "borough": "Manhattan",
         "coordinates": {
           "lat": 40.7614,
           "lng": -73.9776
         },
-        "distanceMeters": 450
+        "zoneId": "zone_midtown"
       }
     ]
   }
 }
 ```
+
+Planned enriched response fields:
+
+- `address`
+- `borough`
+- `distanceMeters`, when `lat` and `lng` are supported
 
 Errors:
 
@@ -479,6 +530,8 @@ Errors:
 
 Status: `MVP_REQUIRED`
 
+Implementation state: `IMPLEMENTED`
+
 Response `200`:
 
 ```json
@@ -486,31 +539,29 @@ Response `200`:
   "success": true,
   "data": {
     "location": {
-      "id": "loc_123",
-      "externalId": "osm_node_123456",
+      "id": "123456",
+      "externalId": "osm_123456",
       "name": "Times Square",
       "type": "attraction",
-      "address": "Manhattan, New York, NY",
-      "borough": "Manhattan",
       "coordinates": {
         "lat": 40.758,
         "lng": -73.9855
       },
-      "tags": ["tourist", "outdoor", "landmark"],
-      "accessibility": {
-        "wheelchairAccessible": true,
-        "stepFreeAccess": true,
-        "accessibleTransitNearby": true,
-        "dataConfidence": "medium",
-        "notes": "Accessibility data may be incomplete."
-      },
-      "openingHours": null,
-      "source": "openstreetmap",
-      "updatedAt": "2026-06-25T12:00:00Z"
+      "zoneId": "zone_midtown"
     }
   }
 }
 ```
+
+Planned enriched response fields:
+
+- `address`
+- `borough`
+- `tags`
+- `accessibility`
+- `openingHours`
+- `source`
+- `updatedAt`
 
 Errors:
 
@@ -521,6 +572,8 @@ Errors:
 `GET /locations/nearby?lat={lat}&lng={lng}&radiusMeters={radius}&type={type}&limit={limit}`
 
 Status: `MVP_REQUIRED`
+
+Implementation state: `PLANNED`
 
 Query parameters:
 
@@ -545,7 +598,7 @@ Response `200`:
     "radiusMeters": 1000,
     "results": [
       {
-        "id": "loc_456",
+        "id": "654321",
         "name": "Bryant Park",
         "type": "park",
         "address": "New York, NY",
@@ -566,11 +619,13 @@ Response `200`:
 
 Status: `MVP_REQUIRED`
 
+Implementation state: `PLANNED`
+
 Request:
 
 ```json
 {
-  "locationId": "loc_123",
+  "locationId": "123456",
   "targetTime": "2026-07-01T15:00:00-04:00",
   "durationMinutes": 60,
   "userContext": {
@@ -591,7 +646,7 @@ Response `200`:
   "data": {
     "prediction": {
       "predictionId": "pred_123",
-      "locationId": "loc_123",
+      "locationId": "123456",
       "targetTime": "2026-07-01T15:00:00-04:00",
       "durationMinutes": 60,
       "busynessScore": 82,
@@ -640,11 +695,13 @@ Errors:
 
 Status: `MVP_REQUIRED`
 
+Implementation state: `PLANNED`
+
 Request:
 
 ```json
 {
-  "locationIds": ["loc_123", "loc_456", "loc_789"],
+  "locationIds": ["123456", "654321", "789012"],
   "targetTime": "2026-07-01T15:00:00-04:00",
   "durationMinutes": 60,
   "userContext": {
@@ -665,7 +722,7 @@ Response `200`:
     "predictions": [
       {
         "predictionId": "pred_123",
-        "locationId": "loc_123",
+        "locationId": "123456",
         "busynessScore": 82,
         "busynessLevel": "very_busy",
         "confidence": 0.78,
@@ -673,7 +730,7 @@ Response `200`:
       },
       {
         "predictionId": "pred_456",
-        "locationId": "loc_456",
+        "locationId": "654321",
         "busynessScore": 46,
         "busynessLevel": "moderate",
         "confidence": 0.71,
@@ -682,7 +739,7 @@ Response `200`:
     ],
     "warnings": [
       {
-        "locationId": "loc_789",
+        "locationId": "789012",
         "code": "PREDICTION_UNAVAILABLE",
         "message": "Prediction not available for this location."
       }
@@ -702,6 +759,8 @@ Validation:
 
 Status: `MVP_REQUIRED`
 
+Implementation state: `PLANNED`
+
 Use case:
 
 - Show quiet/busy periods across the day.
@@ -713,7 +772,7 @@ Response `200`:
 {
   "success": true,
   "data": {
-    "locationId": "loc_123",
+    "locationId": "123456",
     "startTime": "2026-07-01T09:00:00-04:00",
     "endTime": "2026-07-01T21:00:00-04:00",
     "intervalMinutes": 60,
@@ -746,11 +805,13 @@ Validation:
 
 Status: `MVP_REQUIRED`
 
+Implementation state: `PLANNED`
+
 Request:
 
 ```json
 {
-  "locationId": "loc_123",
+  "locationId": "123456",
   "targetTime": "2026-07-01T15:00:00-04:00",
   "recommendationTypes": ["quieter_time", "nearby_place"],
   "maxResults": 5,
@@ -774,7 +835,7 @@ Response `200`:
   "data": {
     "originalPrediction": {
       "predictionId": "pred_123",
-      "locationId": "loc_123",
+      "locationId": "123456",
       "busynessScore": 82,
       "busynessLevel": "very_busy",
       "confidence": 0.78
@@ -796,7 +857,7 @@ Response `200`:
         "title": "Try Bryant Park instead",
         "reason": "It is nearby and predicted to be less crowded.",
         "location": {
-          "id": "loc_456",
+          "id": "654321",
           "name": "Bryant Park",
           "type": "park",
           "coordinates": {
@@ -828,11 +889,13 @@ Recommendation rules for the MVP:
 
 Status: `MVP_REQUIRED`
 
+Implementation state: `PLANNED`
+
 Request:
 
 ```json
 {
-  "locationId": "loc_123",
+  "locationId": "123456",
   "targetTime": "2026-07-01T15:00:00-04:00",
   "predictionId": "pred_123",
   "language": "en",
@@ -881,12 +944,14 @@ Implementation rules:
 
 Status: `MVP_REQUIRED`
 
+Implementation state: `PLANNED`
+
 Request:
 
 ```json
 {
   "sessionId": "sess_123",
-  "locationId": "loc_123",
+  "locationId": "123456",
   "predictionId": "pred_123",
   "recommendationId": "rec_place_1",
   "rating": 4,
@@ -923,6 +988,8 @@ Validation:
 
 Status: `MVP_OPTIONAL`
 
+Implementation state: `PLANNED`
+
 Purpose:
 
 - Convenience endpoint for web map. If not implemented, frontend can call `/locations/nearby` then `/predictions/batch`.
@@ -942,7 +1009,7 @@ Response `200`:
     },
     "points": [
       {
-        "locationId": "loc_123",
+        "locationId": "123456",
         "name": "Times Square",
         "type": "attraction",
         "coordinates": {
@@ -964,6 +1031,8 @@ Response `200`:
 `PUT /sessions/{sessionId}/preferences`
 
 Status: `MVP_OPTIONAL`
+
+Implementation state: `PLANNED`
 
 Request:
 
@@ -1008,6 +1077,8 @@ Response `200`:
 
 Status: `FUTURE`
 
+Implementation state: `FUTURE_SCOPE`
+
 Request:
 
 ```json
@@ -1029,7 +1100,7 @@ Response `200`:
   "success": true,
   "data": {
     "reply": "Here are quieter work-friendly options near Midtown for 2 PM.",
-    "suggestedLocations": ["loc_456", "loc_789"],
+    "suggestedLocations": ["654321", "789012"],
     "suggestedActions": ["view_recommendations", "open_map"]
   }
 }
@@ -1041,6 +1112,8 @@ Response `200`:
 
 Status: `FUTURE`
 
+Implementation state: `FUTURE_SCOPE`
+
 Request:
 
 ```json
@@ -1049,7 +1122,7 @@ Request:
     "lat": 40.758,
     "lng": -73.9855
   },
-  "destinationLocationId": "loc_456",
+  "destinationLocationId": "654321",
   "targetTime": "2026-07-01T21:00:00-04:00",
   "transportModes": ["walk", "transit"],
   "userContext": {
@@ -1095,6 +1168,8 @@ Response `200`:
 
 Status: `FUTURE`
 
+Implementation state: `FUTURE_SCOPE`
+
 Response `200`:
 
 ```json
@@ -1106,7 +1181,7 @@ Response `200`:
     "cacheHitRate": 0.64,
     "mostRequestedLocations": [
       {
-        "locationId": "loc_123",
+        "locationId": "123456",
         "name": "Times Square",
         "count": 210
       }
@@ -1118,7 +1193,7 @@ Response `200`:
 
 ## 10. ML Integration Contract
 
-The public API does not require the ML component to run as a REST service. Web and mobile clients should only call the public backend endpoints such as `/predictions`, `/forecast`, and `/recommendations`.
+The public API does not require the ML component to run as a REST service. Web and mobile clients should only call the public backend endpoints such as `/predictions`, `/locations/{locationId}/forecast`, and `/recommendations`.
 
 For the team handoff, Data & ML Lead can provide the prediction layer in one of three supported formats:
 
@@ -1133,6 +1208,8 @@ For the team handoff, Data & ML Lead can provide the prediction layer in one of 
 
 Status: `INTERNAL`
 
+Implementation state: `INTERNAL_OPTION`
+
 ML deliverable:
 
 ```text
@@ -1143,7 +1220,7 @@ Required CSV columns:
 
 | Column | Type | Example | Notes |
 |---|---|---|---|
-| `location_id` | string | `loc_123` | Must match backend `locations.id` |
+| `location_id` | string | `123456` | Must match the public `locationId` (`locations.osm_id` as a string) |
 | `target_time` | ISO datetime | `2026-07-01T15:00:00-04:00` | Time bucket for prediction |
 | `duration_minutes` | integer | `60` | Default 60 |
 | `busyness_score` | integer | `82` | 0-100 |
@@ -1158,7 +1235,7 @@ Example row:
 
 ```csv
 location_id,target_time,duration_minutes,busyness_score,busyness_level,confidence,baseline_score,model_version,factors_json,generated_at
-loc_123,2026-07-01T15:00:00-04:00,60,82,very_busy,0.78,64,busyness-v0.1,"[{""name"":""time_of_day"",""impact"":""high"",""direction"":""increase""}]",2026-06-25T12:00:00Z
+123456,2026-07-01T15:00:00-04:00,60,82,very_busy,0.78,64,busyness-v0.1,"[{""name"":""time_of_day"",""impact"":""high"",""direction"":""increase""}]",2026-06-25T12:00:00Z
 ```
 
 Backend behavior:
@@ -1171,6 +1248,8 @@ Backend behavior:
 ### 10.2 Option B - Model File Handoff
 
 Status: `INTERNAL`
+
+Implementation state: `INTERNAL_OPTION`
 
 ML deliverables:
 
@@ -1198,7 +1277,7 @@ Input JSON:
 {
   "items": [
     {
-      "locationId": "loc_123",
+      "locationId": "123456",
       "features": {
         "lat": 40.758,
         "lng": -73.9855,
@@ -1220,7 +1299,7 @@ Output JSON:
 {
   "results": [
     {
-      "locationId": "loc_123",
+      "locationId": "123456",
       "busynessScore": 82,
       "confidence": 0.78,
       "modelVersion": "busyness-v0.1",
@@ -1245,7 +1324,9 @@ Backend behavior:
 
 ### 10.3 Option C - Optional REST ML Service
 
-Status: `INTERNAL_OPTIONAL`
+Status: `INTERNAL`
+
+Implementation state: `INTERNAL_OPTION`
 
 These endpoints are only needed if Data & ML Lead provides and maintains a Python Flask/FastAPI service. They should not be called by web/mobile clients.
 
@@ -1257,7 +1338,7 @@ Request:
 
 ```json
 {
-  "locationId": "loc_123",
+  "locationId": "123456",
   "features": {
     "lat": 40.758,
     "lng": -73.9855,
@@ -1305,7 +1386,7 @@ Request:
 {
   "items": [
     {
-      "locationId": "loc_123",
+      "locationId": "123456",
       "features": {
         "lat": 40.758,
         "lng": -73.9855,
@@ -1324,7 +1405,7 @@ Response:
 {
   "results": [
     {
-      "locationId": "loc_123",
+      "locationId": "123456",
       "busynessScore": 82,
       "confidence": 0.78,
       "modelVersion": "busyness-v0.1"
@@ -1338,6 +1419,7 @@ Response:
 | Code | HTTP | Meaning |
 |---|---:|---|
 | `INVALID_JSON` | 400 | Request body is not valid JSON |
+| `DATABASE_UNAVAILABLE` | 503 | Database connection failed |
 | `INVALID_QUERY` | 400 | Query string missing or malformed |
 | `INVALID_LOCATION_TYPE` | 400 | Unknown location type |
 | `INVALID_TIME_RANGE` | 422 | Time range invalid or too large |
@@ -1359,7 +1441,7 @@ Response:
 
 Primary user flow:
 
-1. Create anonymous session: `POST /sessions`.
+1. Optional: create anonymous session with `POST /sessions` if persistent preferences are needed.
 2. Search place: `GET /locations/search`.
 3. Load selected place: `GET /locations/{locationId}`.
 4. Get prediction: `POST /predictions`.
@@ -1367,6 +1449,12 @@ Primary user flow:
 6. Get quieter alternatives: `POST /recommendations`.
 7. Show map context: `GET /locations/nearby` then `POST /predictions/batch`.
 8. Submit feedback: `POST /feedback`.
+
+Current integration flow:
+
+1. Frontend/mobile can integrate location search and detail now.
+2. Frontend/mobile should mock prediction, recommendation, explanation, and feedback responses until backend implements those endpoints.
+3. Backend should keep returning the current location shape unless the contract is deliberately updated and communicated.
 
 Fallback rules:
 
@@ -1390,20 +1478,17 @@ Fallback rules:
 
 ## 14. Backend Implementation Priority
 
-Build in this order:
+The first three endpoints are already implemented in the Express backend. Build the remaining endpoints in this order:
 
-1. `GET /health`
-2. `GET /locations/search`
-3. `GET /locations/{locationId}`
-4. `POST /predictions` after Data & ML output is available
-5. `GET /locations/{locationId}/forecast`
-6. `POST /recommendations`
-7. `POST /explanations` after prediction factors or GenAI strategy is available
-8. `GET /locations/nearby`
-9. `POST /predictions/batch`
-10. `POST /sessions`
-11. `POST /feedback`
-12. Optional `/map/heatmap`
+1. `POST /predictions` after Data & ML output is available.
+2. `GET /locations/{locationId}/forecast`.
+3. `GET /locations/nearby`.
+4. `POST /predictions/batch`.
+5. `POST /recommendations`.
+6. `POST /explanations` after prediction factors or GenAI strategy is available.
+7. `POST /feedback`.
+8. Optional: `POST /sessions`.
+9. Optional: `/map/heatmap`.
 
 This order lets frontend/mobile integrate early while the ML model, recommendation logic, and GenAI layer continue improving.
 
@@ -1413,8 +1498,18 @@ These should be agreed:
 
 | Decision | Recommended answer |
 |---|---|
-| Canonical location ID | Current database uses `locations.osm_id` as the public `locationId`; API should return it as a string. If a separate internal UUID is added later, keep `osm_id` as `externalId` |
+| Canonical location ID | Use `locations.osm_id` as the public `locationId` string for now. Return `externalId` as `osm_<osm_id>`. Do not expose internal database IDs to clients. |
 | Timezone | Client sends ISO 8601; backend converts model features to New York local time |
 | GenAI failure behavior | Return template explanation fallback |
 | Heatmap implementation | Prefer `nearby + batch`; `/map/heatmap` optional |
 | Safety-aware routing | Future, unless already available from frontend |
+
+## 16. Review Checklist / Next Improvements
+
+Before moving from contract review to implementation, the team should confirm:
+
+1. Data & ML handoff format: choose CSV, model file, or REST service. CSV is the simplest MVP path.
+2. Prediction output shape: confirm `busynessScore`, `busynessLevel`, `confidence`, `modelVersion`, and optional `factors`.
+3. Location enrichment: decide whether address, borough, accessibility, opening hours, and tags are required for MVP or can remain planned fields.
+4. Session behavior: keep sessions optional unless the frontend/mobile flow truly needs stored preferences.
+5. Human-friendly docs: after this contract is stable, generate the public/team docs from this file so the friendly docs and contract do not drift.
