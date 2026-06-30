@@ -105,7 +105,7 @@ Sessions are optional for MVP. Frontend/mobile can pass user preferences inline 
 | PUT | `/sessions/{sessionId}/preferences` | Optional MVP | Update session preferences |
 | GET | `/map/heatmap` | Optional MVP | Convenience endpoint for map heatmap |
 
-Future endpoints such as chat, safety-aware routing, and admin stats are documented in `api-contract.md`, but should not block MVP work.
+Future endpoints such as safety-aware routing and admin stats are documented in `api-contract.md`, but should not block MVP work.
 
 ## Implemented endpoints
 

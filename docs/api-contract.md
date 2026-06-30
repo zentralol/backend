@@ -40,7 +40,7 @@ API count:
 | Current implemented public endpoints | 3 | Health, location search, and location detail |
 | Required public MVP target endpoints | 10 | Main web/mobile product flow; includes implemented endpoints |
 | Optional public MVP target endpoints | 3 | Useful, but should not block the core flow |
-| Future/admin endpoints | 3 | Shared for full-project planning |
+| Future/admin endpoints | 2 | Shared for full-project planning |
 | Internal ML integration options | 2 | Optional backend-to-ML service boundary; file-based handoff is also supported |
 
 Target counts include endpoints that may already be implemented. Use the endpoint summary table below to see current implementation state.
@@ -371,11 +371,10 @@ Score interpretation:
 | 11 | POST | `/sessions` | `MVP_OPTIONAL` | `PLANNED` | Web/mobile |
 | 12 | GET | `/map/heatmap` | `MVP_OPTIONAL` | `PLANNED` | Web map |
 | 13 | PUT | `/sessions/{sessionId}/preferences` | `MVP_OPTIONAL` | `PLANNED` | Web/mobile |
-| 14 | POST | `/chat/messages` | `FUTURE` | `FUTURE_SCOPE` | Web/mobile |
-| 15 | POST | `/routes/safety-aware` | `FUTURE` | `FUTURE_SCOPE` | Mobile |
-| 16 | GET | `/admin/stats/predictions` | `FUTURE` | `FUTURE_SCOPE` | Admin |
-| 17 | POST | `/internal/ml/predict-busyness` | `INTERNAL` | `INTERNAL_OPTION` | Backend |
-| 18 | POST | `/internal/ml/predict-busyness-batch` | `INTERNAL` | `INTERNAL_OPTION` | Backend |
+| 14 | POST | `/routes/safety-aware` | `FUTURE` | `FUTURE_SCOPE` | Mobile |
+| 15 | GET | `/admin/stats/predictions` | `FUTURE` | `FUTURE_SCOPE` | Admin |
+| 16 | POST | `/internal/ml/predict-busyness` | `INTERNAL` | `INTERNAL_OPTION` | Backend |
+| 17 | POST | `/internal/ml/predict-busyness-batch` | `INTERNAL` | `INTERNAL_OPTION` | Backend |
 
 ## 8. Public MVP Target Endpoints
 
@@ -1071,42 +1070,7 @@ Response `200`:
 }
 ```
 
-### 9.2 Conversational Planning Chat
-
-`POST /chat/messages`
-
-Status: `FUTURE`
-
-Implementation state: `FUTURE_SCOPE`
-
-Request:
-
-```json
-{
-  "sessionId": "sess_123",
-  "message": "I want somewhere quiet to work near Midtown after lunch.",
-  "context": {
-    "lat": 40.7549,
-    "lng": -73.984,
-    "targetTime": "2026-07-01T14:00:00-04:00"
-  }
-}
-```
-
-Response `200`:
-
-```json
-{
-  "success": true,
-  "data": {
-    "reply": "Here are quieter work-friendly options near Midtown for 2 PM.",
-    "suggestedLocations": ["654321", "789012"],
-    "suggestedActions": ["view_recommendations", "open_map"]
-  }
-}
-```
-
-### 9.3 Safety-Aware Route Suggestion
+### 9.2 Safety-Aware Route Suggestion
 
 `POST /routes/safety-aware`
 
@@ -1162,7 +1126,7 @@ Response `200`:
 }
 ```
 
-### 9.4 Admin Prediction Statistics
+### 9.3 Admin Prediction Statistics
 
 `GET /admin/stats/predictions?startDate={date}&endDate={date}`
 
