@@ -1,56 +1,64 @@
-# Zentra API Contract v1.0 - Project API Contract
+# Zentra API Contract v1.0 - Full Project Complete Version
 
 Project: COMP47360 Team 10 - Zentra  
-Backend scope: Express.js API, PostgreSQL, prediction/ML integration, GenAI explanation integration  
+Backend scope: Express.js API gateway, Supabase PostgreSQL, FastAPI ML integration, H3 grid data service, recommendation support  
 Clients: Web frontend, SwiftUI mobile app, optional admin/planning view  
-Contract status: Team-facing API contract with current implementation notes
-Last reviewed against backend implementation: 2026-06-29
+Last updated: 2026-07-02  
+Contract status: Full project API contract with implementation states
 
-## 1. Project Scope
+## 1. Purpose
 
-This contract defines the API surface needed for the Zentra project. It is both:
+This contract describes the full project API surface, not only the endpoints currently implemented.
 
-- the target API shape that frontend, mobile, backend, ML, and product teammates can plan around; and
-- a snapshot of what the current Express backend already implements.
+It separates endpoints into:
 
-The backend currently implements only the health check, location search, and location detail endpoints. The remaining MVP endpoints are planned contract targets, not proof that code exists yet.
+- `IMPLEMENTED`: available in the current Express backend
+- `PLANNED_MVP`: needed for the MVP but not implemented yet
+- `PLANNED_AFTER_POI`: depends on confirmed online POI source or POI catalog
+- `FUTURE`: later full-project extensions
+- `INTERNAL`: backend-only or backend-to-ML boundary
+- `REMOVED`: deliberately removed from backend scope
 
-### Product priority
+## 2. Current Product Direction
 
-| Status | Meaning |
-|---|---|
-| `MVP_REQUIRED` | Core MVP endpoint needed for the main product flow |
-| `MVP_OPTIONAL` | Useful product endpoint, but not required for the core flow |
-| `FUTURE` | Full-project extension endpoint for later implementation |
-| `INTERNAL` | Backend-to-ML or backend-only service contract |
+Zentra is now a coordinate-based crowd prediction system.
 
-### Implementation state
+Location search is handled by the frontend or an online POI/geocoding API. After the user selects a place, the frontend sends `lat`, `lng`, and `targetTime` to the Express backend.
 
-| State | Meaning |
-|---|---|
-| `IMPLEMENTED` | Available in the current Express backend |
-| `PLANNED` | Target API shape, but not implemented yet |
-| `FUTURE_SCOPE` | Later product extension, not needed for MVP |
-| `INTERNAL_OPTION` | Optional backend-to-ML boundary; not called by web/mobile clients |
+The backend is responsible for:
 
-API count:
+- validating coordinates and time;
+- calling FastAPI ML through Express;
+- mapping coordinates to H3 grid predictions;
+- reading fallback H3 data from Supabase;
+- returning predictions, heatmap data, recommendations, feedback responses, and admin statistics;
+- logging prediction requests;
+- later supporting authenticated preferences and POI-aware recommendations.
 
-| Group | Count | Notes |
-|---|---:|---|
-| Current implemented public endpoints | 3 | Health, location search, and location detail |
-| Required public MVP target endpoints | 10 | Main web/mobile product flow; includes implemented endpoints |
-| Optional public MVP target endpoints | 3 | Useful, but should not block the core flow |
-| Future/admin endpoints | 2 | Shared for full-project planning |
-| Internal ML integration options | 2 | Optional backend-to-ML service boundary; file-based handoff is also supported |
-
-Target counts include endpoints that may already be implemented. Use the endpoint summary table below to see current implementation state.
-
-## 2. Base URLs
+## 3. Architecture
 
 ```text
-Local API:     http://localhost:3000/api/v1
-Staging API:   https://staging.zentra.example.com/api/v1
-Production:    https://api.zentra.example.com/api/v1
+Frontend / Mobile
+      |
+      v
+Express Backend API
+      |---------------------> FastAPI ML Service
+      |
+      v
+Supabase PostgreSQL
+
+External / future services:
+      - Clerk authentication
+      - Online POI / geocoding API
+      - Routing / itinerary tools
+```
+
+Express acts as the API gateway. Frontend clients should call Express only.
+
+## 4. Base URL
+
+```text
+Local API: http://localhost:3000/api/v1
 ```
 
 All requests and responses use JSON.
@@ -60,16 +68,94 @@ Content-Type: application/json
 Accept: application/json
 ```
 
-Common optional headers:
+Optional headers:
 
 ```http
-Accept-Language: en
+Authorization: Bearer <clerk_jwt>
 X-Request-Id: req_client_generated_uuid
-Authorization: Bearer <token>
+Accept-Language: en
 ```
 
+Current backend does not yet verify Clerk JWT tokens. Clerk verification is planned.
 
-## 3. Common Response Format
+## 5. Shared Models
+
+### Coordinates
+
+```json
+{
+  "lat": 40.758,
+  "lng": -73.9855
+}
+```
+
+Current supported area: Manhattan.
+
+### Place Input
+
+Used when frontend or online POI provider has already resolved a place.
+
+```json
+{
+  "placeId": "optional_external_place_id",
+  "name": "Central Park",
+  "category": "park",
+  "coordinates": {
+    "lat": 40.7812,
+    "lng": -73.9665
+  },
+  "source": "online_poi_api"
+}
+```
+
+### Busyness Level
+
+```ts
+type BusynessLevel =
+  | "very_quiet"
+  | "quiet"
+  | "moderate"
+  | "busy"
+  | "very_busy";
+```
+
+| Score | Level |
+|---:|---|
+| 0-20 | `very_quiet` |
+| 21-40 | `quiet` |
+| 41-60 | `moderate` |
+| 61-80 | `busy` |
+| 81-100 | `very_busy` |
+
+### User Preferences
+
+User preferences belong to authenticated Clerk users. They are not anonymous session context and should not be passed around as `userContext` in normal prediction requests.
+
+Target design:
+
+```text
+Frontend logs in with Clerk
+Backend verifies Clerk JWT
+Backend reads/writes preferences through /users/me/preferences
+Recommendation and itinerary logic reads stored preferences server-side
+```
+
+Preference shape:
+
+```json
+{
+  "travelPace": "relaxed",
+  "interests": ["parks", "museums", "food"],
+  "budgetRange": "medium",
+  "crowdTolerance": "low",
+  "mobilityNeeds": ["step_free"],
+  "dietaryNeeds": ["vegetarian"],
+  "inclusionNeeds": ["quiet_spaces"],
+  "preferredLanguage": "en"
+}
+```
+
+## 6. Common Response Format
 
 Success:
 
@@ -78,8 +164,7 @@ Success:
   "success": true,
   "data": {},
   "meta": {
-    "requestId": "req_123",
-    "generatedAt": "2026-06-25T12:00:00Z"
+    "generatedAt": "2026-07-02T12:00:00Z"
   }
 }
 ```
@@ -90,301 +175,56 @@ Error:
 {
   "success": false,
   "error": {
-    "code": "INVALID_TIME_RANGE",
-    "message": "startTime must be before endTime.",
-    "details": {
-      "field": "startTime"
-    }
+    "code": "INVALID_QUERY",
+    "message": "targetTime must be a valid date-time string"
   },
   "meta": {
-    "requestId": "req_123"
+    "generatedAt": "2026-07-02T12:00:00Z"
   }
-}
-```
-
-Pagination:
-
-```json
-{
-  "pagination": {
-    "limit": 20,
-    "offset": 0,
-    "total": 148,
-    "hasMore": true
-  }
-}
-```
-
-## 4. Standard HTTP Status Codes
-
-| Status | Use |
-|---:|---|
-| 200 | Successful read/action |
-| 201 | Resource created |
-| 202 | Job accepted |
-| 400 | Invalid JSON/body/query |
-| 401 | Auth required or invalid |
-| 403 | Auth valid but role not allowed |
-| 404 | Resource not found |
-| 409 | Conflict or duplicate |
-| 422 | Valid JSON but invalid business input |
-| 429 | Rate limited |
-| 500 | Unexpected server error |
-| 503 | Database, ML service, or GenAI service unavailable |
-
-## 5. Shared Enums
-
-```ts
-type BusynessLevel =
-  | "very_quiet"
-  | "quiet"
-  | "moderate"
-  | "busy"
-  | "very_busy";
-
-type LocationType =
-  | "attraction"
-  | "cafe"
-  | "restaurant"
-  | "museum"
-  | "park"
-  | "transport"
-  | "neighborhood"
-  | "other";
-
-type RecommendationType =
-  | "quieter_time"
-  | "nearby_place"
-  | "route_adjustment";
-
-type TravelStyle =
-  | "relaxed"
-  | "balanced"
-  | "fast"
-  | "work_friendly"
-  | "family";
-
-type MobilityNeed =
-  | "wheelchair"
-  | "step_free"
-  | "low_walking"
-  | "driving_needed"
-  | "none";
-
-type Sensitivity = "low" | "medium" | "high";
-type TransportMode = "walk" | "transit" | "bike" | "drive";
-type ClientType = "web" | "mobile" | "admin" | "unknown";
-```
-## 5.1 Database Notes
-
-The database schema is still evolving and is not part of the public API contract.
-
-The backend is responsible for mapping database fields to the API response shape. Frontend and mobile clients should only depend on the API fields defined in this contract, not on database table names or column names.
-
-Prediction-related storage will be defined after Data & ML provides the final prediction output format.
-
-## 6. Shared Data Models
-
-### 6.1 Coordinates
-
-```json
-{
-  "lat": 40.758,
-  "lng": -73.9855
-}
-```
-
-Validation:
-
-- `lat`: number, -90 to 90
-- `lng`: number, -180 to 180
-- Public MVP endpoints should reject unsupported coordinates outside Manhattan.
-
-### 6.2 AccessibilityInfo
-
-```json
-{
-  "wheelchairAccessible": true,
-  "stepFreeAccess": true,
-  "accessibleTransitNearby": true,
-  "dataConfidence": "medium",
-  "notes": "Accessibility data may be incomplete."
-}
-```
-
-### 6.3 LocationSummary
-
-Current backend response:
-
-```json
-{
-  "id": "123456",
-  "externalId": "osm_123456",
-  "name": "Times Square",
-  "type": "attraction",
-  "coordinates": {
-    "lat": 40.758,
-    "lng": -73.9855
-  },
-  "zoneId": "zone_midtown"
-}
-```
-
-Planned enriched fields, when data is available:
-
-- `address`
-- `borough`
-- `distanceMeters`
-
-### 6.4 LocationDetail
-
-Current backend response:
-
-```json
-{
-  "id": "123456",
-  "externalId": "osm_123456",
-  "name": "Times Square",
-  "type": "attraction",
-  "coordinates": {
-    "lat": 40.758,
-    "lng": -73.9855
-  },
-  "zoneId": "zone_midtown"
-}
-```
-
-Planned enriched location detail fields:
-
-```json
-{
-  "tags": ["tourist", "outdoor", "landmark"],
-  "accessibility": {
-    "wheelchairAccessible": true,
-    "stepFreeAccess": true,
-    "accessibleTransitNearby": true,
-    "dataConfidence": "medium",
-    "notes": "Accessibility data may be incomplete."
-  },
-  "openingHours": null,
-  "source": "openstreetmap",
-  "updatedAt": "2026-06-25T12:00:00Z"
-}
-```
-
-### 6.5 UserContext
-
-This object can be passed inline to prediction/recommendation endpoints. For the MVP, it does not require a real user account.
-
-```json
-{
-  "sessionId": "sess_123",
-  "groupSize": 2,
-  "travelStyle": "relaxed",
-  "crowdSensitivity": "high",
-  "noiseSensitivity": "medium",
-  "mobilityNeeds": ["step_free"],
-  "dietaryRestrictions": ["vegetarian"],
-  "preferredLanguage": "en",
-  "transportModes": ["walk", "transit"]
-}
-```
-
-### 6.6 BusynessPrediction
-
-```json
-{
-  "predictionId": "pred_123",
-  "locationId": "123456",
-  "targetTime": "2026-07-01T15:00:00-04:00",
-  "durationMinutes": 60,
-  "busynessScore": 82,
-  "busynessLevel": "very_busy",
-  "confidence": 0.78,
-  "baselineScore": 64,
-  "factors": [
-    {
-      "name": "time_of_day",
-      "label": "Time of day",
-      "impact": "high",
-      "direction": "increase"
-    }
-  ],
-  "modelVersion": "busyness-v0.1",
-  "cached": true,
-  "dataFreshness": {
-    "lastUpdated": "2026-06-25T10:00:00Z",
-    "sources": ["poi", "weather", "transport", "historical_patterns"]
-  }
-}
-```
-
-Score interpretation:
-
-| Score | Level | UI label |
-|---:|---|---|
-| 0-20 | `very_quiet` | Very quiet |
-| 21-40 | `quiet` | Quiet |
-| 41-60 | `moderate` | Moderate |
-| 61-80 | `busy` | Busy |
-| 81-100 | `very_busy` | Very busy |
-
-### 6.7 Recommendation
-
-```json
-{
-  "id": "rec_123",
-  "type": "nearby_place",
-  "title": "Try Bryant Park instead",
-  "reason": "It is nearby and predicted to be less crowded at the selected time.",
-  "location": {
-    "id": "654321",
-    "name": "Bryant Park",
-    "type": "park",
-    "coordinates": {
-      "lat": 40.7536,
-      "lng": -73.9832
-    }
-  },
-  "targetTime": "2026-07-01T15:00:00-04:00",
-  "estimatedBusynessScore": 46,
-  "estimatedBusynessLevel": "moderate",
-  "distanceMeters": 900,
-  "accessibilityMatch": true
 }
 ```
 
 ## 7. Endpoint Summary
 
-| # | Method | Path | Product priority | Implementation state | Main client |
+| # | Method | Path | State | Client | Purpose |
 |---:|---|---|---|---|---|
-| 1 | GET | `/health` | `MVP_REQUIRED` | `IMPLEMENTED` | All |
-| 2 | GET | `/locations/search` | `MVP_REQUIRED` | `IMPLEMENTED` | Web/mobile |
-| 3 | GET | `/locations/{locationId}` | `MVP_REQUIRED` | `IMPLEMENTED` | Web/mobile |
-| 4 | GET | `/locations/nearby` | `MVP_REQUIRED` | `PLANNED` | Web/mobile map |
-| 5 | POST | `/predictions` | `MVP_REQUIRED` | `PLANNED` | Web/mobile |
-| 6 | POST | `/predictions/batch` | `MVP_REQUIRED` | `PLANNED` | Map/heatmap |
-| 7 | GET | `/locations/{locationId}/forecast` | `MVP_REQUIRED` | `PLANNED` | Web/mobile |
-| 8 | POST | `/recommendations` | `MVP_REQUIRED` | `PLANNED` | Web/mobile |
-| 9 | POST | `/explanations` | `MVP_REQUIRED` | `PLANNED` | Web/mobile |
-| 10 | POST | `/feedback` | `MVP_REQUIRED` | `PLANNED` | Web/mobile |
-| 11 | POST | `/sessions` | `MVP_OPTIONAL` | `PLANNED` | Web/mobile |
-| 12 | GET | `/map/heatmap` | `MVP_OPTIONAL` | `PLANNED` | Web map |
-| 13 | PUT | `/sessions/{sessionId}/preferences` | `MVP_OPTIONAL` | `PLANNED` | Web/mobile |
-| 14 | POST | `/routes/safety-aware` | `FUTURE` | `FUTURE_SCOPE` | Mobile |
-| 15 | GET | `/admin/stats/predictions` | `FUTURE` | `FUTURE_SCOPE` | Admin |
-| 16 | POST | `/internal/ml/predict-busyness` | `INTERNAL` | `INTERNAL_OPTION` | Backend |
-| 17 | POST | `/internal/ml/predict-busyness-batch` | `INTERNAL` | `INTERNAL_OPTION` | Backend |
+| 1 | GET | `/health` | `IMPLEMENTED` | All | Service and database health |
+| 2 | POST | `/predictions` | `IMPLEMENTED` | Web/mobile | Single coordinate crowd prediction |
+| 3 | POST | `/predictions/batch` | `IMPLEMENTED` | Web/mobile/map | Batch coordinate predictions |
+| 4 | GET | `/map/heatmap` | `IMPLEMENTED` | Web map | H3 heatmap points |
+| 5 | POST | `/recommendations` | `IMPLEMENTED` | Web/mobile | Current quieter H3 area recommendations |
+| 6 | GET | `/predictions/forecast` | `IMPLEMENTED` | Web/mobile | Prototype coordinate forecast |
+| 7 | POST | `/feedback` | `IMPLEMENTED` | Web/mobile | Store user feedback |
+| 8 | GET | `/admin/stats/predictions` | `IMPLEMENTED` | Admin | Prediction request statistics |
+| 9 | POST | `/explanations` | `PLANNED_MVP` | Web/mobile | Plain-language prediction explanation |
+| 10 | POST | `/recommendations/quiet-times` | `PLANNED_MVP` | Web/mobile | Suggest quieter times for same coordinate |
+| 11 | GET | `/users/me/preferences` | `PLANNED_MVP` | Web/mobile | Read logged-in user's onboarding preferences |
+| 12 | PUT | `/users/me/preferences` | `PLANNED_MVP` | Web/mobile | Update logged-in user's onboarding preferences |
+| 13 | POST | `/recommendations/places` | `PLANNED_AFTER_POI` | Web/mobile | Rank candidate POIs with crowd prediction |
+| 14 | POST | `/itineraries` | `FUTURE` | Web/mobile | Generate custom crowd-aware itinerary |
+| 15 | POST | `/routes/crowd-aware` | `FUTURE` | Mobile/web map | Route-level crowd-aware guidance |
+| 16 | GET | `/admin/stats/feedback` | `FUTURE` | Admin | Feedback analytics |
+| 17 | POST | `/internal/ml/predict-busyness` | `INTERNAL` | Backend only | Express-to-ML single prediction boundary |
+| 18 | POST | `/internal/ml/predict-busyness-batch` | `INTERNAL` | Backend only | Express-to-ML batch prediction boundary |
 
-## 8. Public MVP Target Endpoints
+Removed from backend scope:
+
+| Removed endpoint | Reason |
+|---|---|
+| `GET /locations/search` | Frontend / online POI API handles place search |
+| `GET /locations/{locationId}` | Backend no longer depends on stored backend location IDs |
+| `GET /locations/nearby` | Replaced by future POI-based recommendation flow |
+| `POST /sessions` | Anonymous sessions removed because app uses login |
+| `PUT /sessions/{sessionId}/preferences` | Replaced by authenticated user preferences |
+| `POST /chat/messages` | Chatbot is frontend-owned |
+
+## 8. Implemented Endpoints
 
 ### 8.1 Health Check
 
 `GET /health`
 
-Status: `MVP_REQUIRED`
-
-Implementation state: `IMPLEMENTED`
+State: `IMPLEMENTED`
 
 Response `200`:
 
@@ -398,242 +238,25 @@ Response `200`:
     "uptimeSeconds": 3600
   },
   "meta": {
-    "generatedAt": "2026-06-25T12:00:00Z"
+    "generatedAt": "2026-07-02T12:00:00Z"
   }
 }
 ```
 
-Note: `predictionService` should be added only after the ML integration has a service or batch job health signal.
-
-### 8.2 Create Anonymous Session
-
-`POST /sessions`
-
-Status: `MVP_OPTIONAL`
-
-Implementation state: `PLANNED`
-
-Purpose:
-
-- Store temporary onboarding/preferences without user accounts.
-- Allows recommendation and explanation endpoints to personalize responses.
-
-MVP note:
-
-- This should not block the core prediction flow because `UserContext` can be passed inline to prediction and recommendation endpoints.
-- Implement this when the app needs persistent onboarding state, preference updates, or multi-step sessions.
-
-Request:
-
-```json
-{
-  "clientType": "mobile",
-  "preferredLanguage": "en",
-  "preferences": {
-    "groupSize": 2,
-    "travelStyle": "relaxed",
-    "crowdSensitivity": "high",
-    "noiseSensitivity": "medium",
-    "mobilityNeeds": ["step_free"],
-    "dietaryRestrictions": [],
-    "transportModes": ["walk", "transit"]
-  }
-}
-```
-
-Response `201`:
-
-```json
-{
-  "success": true,
-  "data": {
-    "sessionId": "sess_123",
-    "expiresAt": "2026-06-26T12:00:00Z",
-    "preferences": {
-      "groupSize": 2,
-      "travelStyle": "relaxed",
-      "crowdSensitivity": "high",
-      "noiseSensitivity": "medium",
-      "mobilityNeeds": ["step_free"],
-      "dietaryRestrictions": [],
-      "preferredLanguage": "en",
-      "transportModes": ["walk", "transit"]
-    }
-  }
-}
-```
-
-Validation:
-
-- `clientType`: optional, default `unknown`
-- `groupSize`: optional, integer 1-20
-- `preferredLanguage`: optional, default `en`
-
-### 8.3 Search Locations
-
-`GET /locations/search?q={query}&type={type}&limit={limit}&lat={lat}&lng={lng}`
-
-Status: `MVP_REQUIRED`
-
-Implementation state: `IMPLEMENTED`
-
-Query parameters:
-
-| Name | Required | Example | Rule |
-|---|---:|---|---|
-| `q` | no in current backend; recommended for UX | `museum` | Current backend allows empty search; target UX should use 2-100 characters |
-| `type` | no | `cafe` | Must be `LocationType` |
-| `limit` | no | `10` | Default 10, max 50 |
-| `lat` | no | `40.758` | Planned for distance sorting; not used by current backend |
-| `lng` | no | `-73.9855` | Planned for distance sorting; not used by current backend |
-
-Response `200`:
-
-```json
-{
-  "success": true,
-  "data": {
-    "query": "museum",
-    "results": [
-      {
-        "id": "123456",
-        "externalId": "osm_123456",
-        "name": "Museum of Modern Art",
-        "type": "museum",
-        "coordinates": {
-          "lat": 40.7614,
-          "lng": -73.9776
-        },
-        "zoneId": "zone_midtown"
-      }
-    ]
-  }
-}
-```
-
-Planned enriched response fields:
-
-- `address`
-- `borough`
-- `distanceMeters`, when `lat` and `lng` are supported
-
-Errors:
-
-- `400 INVALID_QUERY`
-- `400 INVALID_LOCATION_TYPE`
-- `422 OUTSIDE_SUPPORTED_AREA`
-
-### 8.4 Get Location Detail
-
-`GET /locations/{locationId}`
-
-Status: `MVP_REQUIRED`
-
-Implementation state: `IMPLEMENTED`
-
-Response `200`:
-
-```json
-{
-  "success": true,
-  "data": {
-    "location": {
-      "id": "123456",
-      "externalId": "osm_123456",
-      "name": "Times Square",
-      "type": "attraction",
-      "coordinates": {
-        "lat": 40.758,
-        "lng": -73.9855
-      },
-      "zoneId": "zone_midtown"
-    }
-  }
-}
-```
-
-Planned enriched response fields:
-
-- `address`
-- `borough`
-- `tags`
-- `accessibility`
-- `openingHours`
-- `source`
-- `updatedAt`
-
-Errors:
-
-- `404 LOCATION_NOT_FOUND`
-
-### 8.5 Get Nearby Locations
-
-`GET /locations/nearby?lat={lat}&lng={lng}&radiusMeters={radius}&type={type}&limit={limit}`
-
-Status: `MVP_REQUIRED`
-
-Implementation state: `PLANNED`
-
-Query parameters:
-
-| Name | Required | Example | Rule |
-|---|---:|---|---|
-| `lat` | yes | `40.758` | Manhattan supported area |
-| `lng` | yes | `-73.9855` | Manhattan supported area |
-| `radiusMeters` | no | `1000` | Default 1000, max 5000 |
-| `type` | no | `park` | Optional location type |
-| `limit` | no | `20` | Default 20, max 100 |
-
-Response `200`:
-
-```json
-{
-  "success": true,
-  "data": {
-    "center": {
-      "lat": 40.758,
-      "lng": -73.9855
-    },
-    "radiusMeters": 1000,
-    "results": [
-      {
-        "id": "654321",
-        "name": "Bryant Park",
-        "type": "park",
-        "address": "New York, NY",
-        "coordinates": {
-          "lat": 40.7536,
-          "lng": -73.9832
-        },
-        "distanceMeters": 900
-      }
-    ]
-  }
-}
-```
-
-### 8.6 Predict Busyness For One Location
+### 8.2 Single Crowd Prediction
 
 `POST /predictions`
 
-Status: `MVP_REQUIRED`
-
-Implementation state: `PLANNED`
+State: `IMPLEMENTED`
 
 Request:
 
 ```json
 {
-  "locationId": "123456",
-  "targetTime": "2026-07-01T15:00:00-04:00",
-  "durationMinutes": 60,
-  "userContext": {
-    "sessionId": "sess_123",
-    "crowdSensitivity": "high",
-    "noiseSensitivity": "medium",
-    "mobilityNeeds": ["step_free"],
-    "preferredLanguage": "en"
-  }
+  "lat": 40.758,
+  "lng": -73.9855,
+  "targetTime": "2026-07-01T16:30:00-04:00",
+  "durationMinutes": 60
 }
 ```
 
@@ -644,70 +267,66 @@ Response `200`:
   "success": true,
   "data": {
     "prediction": {
-      "predictionId": "pred_123",
-      "locationId": "123456",
-      "targetTime": "2026-07-01T15:00:00-04:00",
+      "predictionId": "ml_892a100d67bffff_1782938161771",
+      "h3Cell": "892a100d67bffff",
+      "coordinates": {
+        "lat": 40.758,
+        "lng": -73.9855
+      },
+      "matchedCoordinates": {
+        "lat": 40.758,
+        "lng": -73.9855
+      },
+      "targetTime": "2026-07-01T16:30:00-04:00",
       "durationMinutes": 60,
-      "busynessScore": 82,
+      "busynessScore": 100,
       "busynessLevel": "very_busy",
-      "confidence": 0.78,
-      "baselineScore": 64,
-      "factors": [
-        {
-          "name": "time_of_day",
-          "label": "Time of day",
-          "impact": "high",
-          "direction": "increase"
-        }
-      ],
-      "modelVersion": "busyness-v0.1",
-      "cached": true,
-      "dataFreshness": {
-        "lastUpdated": "2026-06-25T10:00:00Z",
-        "sources": ["poi", "weather", "transport", "historical_patterns"]
-      }
+      "crowdCategory": "Very Busy",
+      "pedestriansPredicted": 3067.3,
+      "period": "PM",
+      "confidence": 0.8,
+      "modelVersion": "ml-fastapi-v1.0",
+      "cached": false,
+      "source": "ml_fastapi"
     }
   },
   "meta": {
-    "modelVersion": "busyness-v0.1",
-    "generatedAt": "2026-06-25T12:00:00Z"
+    "modelVersion": "ml-fastapi-v1.0",
+    "generatedAt": "2026-07-02T12:00:00Z"
   }
 }
 ```
 
-Validation:
+Behavior:
 
-- `locationId`: required
-- `targetTime`: required ISO 8601; backend should normalize to New York timezone for model features
-- `durationMinutes`: optional, default 60, allowed 15-240
+- Tries FastAPI ML first.
+- Falls back to Supabase `h3_grid_scores` if ML is unavailable.
+- Logs request into `prediction_requests`.
 
-Errors:
-
-- `404 LOCATION_NOT_FOUND`
-- `422 OUTSIDE_SUPPORTED_AREA`
-- `503 MODEL_SERVICE_UNAVAILABLE`
-- `503 PREDICTION_UNAVAILABLE`
-
-### 8.7 Batch Predict For Map / Heatmap
+### 8.3 Batch Crowd Prediction
 
 `POST /predictions/batch`
 
-Status: `MVP_REQUIRED`
-
-Implementation state: `PLANNED`
+State: `IMPLEMENTED`
 
 Request:
 
 ```json
 {
-  "locationIds": ["123456", "654321", "789012"],
-  "targetTime": "2026-07-01T15:00:00-04:00",
+  "targetTime": "2026-07-01T16:30:00-04:00",
   "durationMinutes": 60,
-  "userContext": {
-    "sessionId": "sess_123",
-    "crowdSensitivity": "high",
-    "mobilityNeeds": ["step_free"]
-  }
+  "locations": [
+    {
+      "locationId": "times-square",
+      "lat": 40.758,
+      "lng": -73.9855
+    },
+    {
+      "locationId": "union-square",
+      "lat": 40.7359,
+      "lng": -73.9911
+    }
+  ]
 }
 ```
 
@@ -717,53 +336,57 @@ Response `200`:
 {
   "success": true,
   "data": {
-    "targetTime": "2026-07-01T15:00:00-04:00",
+    "targetTime": "2026-07-01T16:30:00-04:00",
+    "durationMinutes": 60,
     "predictions": [
       {
-        "predictionId": "pred_123",
-        "locationId": "123456",
-        "busynessScore": 82,
+        "predictionId": "ml_892a100d67bffff_1782938184499",
+        "locationId": "times-square",
+        "h3Cell": "892a100d67bffff",
+        "coordinates": {
+          "lat": 40.758,
+          "lng": -73.9855
+        },
+        "busynessScore": 100,
         "busynessLevel": "very_busy",
-        "confidence": 0.78,
-        "modelVersion": "busyness-v0.1"
-      },
-      {
-        "predictionId": "pred_456",
-        "locationId": "654321",
-        "busynessScore": 46,
-        "busynessLevel": "moderate",
-        "confidence": 0.71,
-        "modelVersion": "busyness-v0.1"
+        "crowdCategory": "Very Busy",
+        "pedestriansPredicted": 3067.3,
+        "period": "PM",
+        "confidence": 0.8,
+        "modelVersion": "ml-fastapi-v1.0",
+        "cached": false,
+        "source": "ml_fastapi"
       }
     ],
-    "warnings": [
-      {
-        "locationId": "789012",
-        "code": "PREDICTION_UNAVAILABLE",
-        "message": "Prediction not available for this location."
-      }
-    ]
+    "warnings": []
+  },
+  "meta": {
+    "count": 1,
+    "warningCount": 0,
+    "generatedAt": "2026-07-02T12:00:00Z"
   }
 }
 ```
 
-Validation:
+Notes:
 
-- `locationIds`: required, 1-100 IDs
-- Return partial success where possible.
+- `locationId` is optional and client-defined.
+- Backend uses `lat` and `lng`, not stored location rows.
+- Max batch size: 100.
 
-### 8.8 Get Location Forecast
+### 8.4 Map Heatmap
 
-`GET /locations/{locationId}/forecast?startTime={iso}&endTime={iso}&intervalMinutes={interval}`
+`GET /map/heatmap?targetTime={iso}&limit={limit}&source={source}`
 
-Status: `MVP_REQUIRED`
+State: `IMPLEMENTED`
 
-Implementation state: `PLANNED`
+Query parameters:
 
-Use case:
-
-- Show quiet/busy periods across the day.
-- Support "go later" or "go earlier" recommendations.
+| Name | Required | Default | Notes |
+|---|---:|---|---|
+| `targetTime` | no | current time | Valid date-time string |
+| `limit` | no | 100 | Max 524 |
+| `source` | no | `auto` | `auto`, `ml`, or `database` |
 
 Response `200`:
 
@@ -771,58 +394,51 @@ Response `200`:
 {
   "success": true,
   "data": {
-    "locationId": "123456",
-    "startTime": "2026-07-01T09:00:00-04:00",
-    "endTime": "2026-07-01T21:00:00-04:00",
-    "intervalMinutes": 60,
+    "targetTime": "2026-07-01T16:30:00-04:00",
+    "source": "ml_fastapi",
     "points": [
       {
-        "time": "2026-07-01T09:00:00-04:00",
-        "busynessScore": 38,
-        "busynessLevel": "quiet",
-        "confidence": 0.74
-      },
-      {
-        "time": "2026-07-01T15:00:00-04:00",
-        "busynessScore": 82,
-        "busynessLevel": "very_busy",
-        "confidence": 0.78
+        "h3Cell": "892a1008807ffff",
+        "coordinates": {
+          "lat": 40.7952379433945,
+          "lng": -73.9725090299033
+        },
+        "period": "PM",
+        "queryTimestamp": "2026-07-01T16:30:00-04:00",
+        "crowdScore": 53,
+        "crowdLevel": "moderate",
+        "crowdCategory": "Moderate",
+        "pedestriansPredicted": 3399.1,
+        "source": "ml_fastapi"
       }
     ]
+  },
+  "meta": {
+    "count": 1,
+    "generatedAt": "2026-07-02T12:00:00Z"
   }
 }
 ```
 
-Validation:
-
-- Max forecast window: 7 days
-- `intervalMinutes`: 30, 60, or 120
-
-### 8.9 Get Quieter Recommendations
+### 8.5 Quieter H3 Area Recommendations
 
 `POST /recommendations`
 
-Status: `MVP_REQUIRED`
+State: `IMPLEMENTED`
 
-Implementation state: `PLANNED`
+Current purpose:
+
+- Returns quieter H3 grid areas near the requested coordinate.
+- Does not yet return named POI places.
 
 Request:
 
 ```json
 {
-  "locationId": "123456",
-  "targetTime": "2026-07-01T15:00:00-04:00",
-  "recommendationTypes": ["quieter_time", "nearby_place"],
-  "maxResults": 5,
-  "userContext": {
-    "sessionId": "sess_123",
-    "travelStyle": "relaxed",
-    "crowdSensitivity": "high",
-    "noiseSensitivity": "medium",
-    "mobilityNeeds": ["step_free"],
-    "transportModes": ["walk", "transit"],
-    "preferredLanguage": "en"
-  }
+  "lat": 40.758,
+  "lng": -73.9855,
+  "targetTime": "2026-07-01T16:30:00-04:00",
+  "limit": 5
 }
 ```
 
@@ -832,78 +448,171 @@ Response `200`:
 {
   "success": true,
   "data": {
-    "originalPrediction": {
-      "predictionId": "pred_123",
-      "locationId": "123456",
-      "busynessScore": 82,
-      "busynessLevel": "very_busy",
-      "confidence": 0.78
-    },
+    "targetTime": "2026-07-01T16:30:00-04:00",
     "recommendations": [
       {
-        "id": "rec_time_1",
-        "type": "quieter_time",
-        "title": "Go around 10:00 instead",
-        "reason": "The forecast is lower in the morning.",
-        "targetTime": "2026-07-01T10:00:00-04:00",
-        "estimatedBusynessScore": 44,
-        "estimatedBusynessLevel": "moderate",
-        "accessibilityMatch": true
-      },
-      {
-        "id": "rec_place_1",
-        "type": "nearby_place",
-        "title": "Try Bryant Park instead",
-        "reason": "It is nearby and predicted to be less crowded.",
-        "location": {
-          "id": "654321",
-          "name": "Bryant Park",
-          "type": "park",
-          "coordinates": {
-            "lat": 40.7536,
-            "lng": -73.9832
-          }
+        "type": "quieter_place",
+        "h3Cell": "892a100d6d3ffff",
+        "coordinates": {
+          "lat": 40.7714011091155,
+          "lng": -73.9737226811384
         },
-        "targetTime": "2026-07-01T15:00:00-04:00",
-        "estimatedBusynessScore": 46,
-        "estimatedBusynessLevel": "moderate",
-        "distanceMeters": 900,
-        "accessibilityMatch": true
+        "busynessScore": 76,
+        "busynessLevel": "busy",
+        "pedestriansPredicted": 1679.2,
+        "period": "PM",
+        "reason": "This nearby grid cell has a lower predicted crowd score."
       }
     ]
+  },
+  "meta": {
+    "count": 1,
+    "generatedAt": "2026-07-02T12:00:00Z"
   }
 }
 ```
 
-Recommendation rules for the MVP:
+### 8.6 Coordinate Forecast
 
-- `quieter_time`: compare same location across forecast window.
-- `nearby_place`: compare nearby locations within 1-2 km.
-- Respect accessibility filters where data exists.
-- If accessibility data is missing, return `accessibilityMatch: null` or include a warning.
+`GET /predictions/forecast?lat={lat}&lng={lng}&startTime={iso}&endTime={iso}&limit={limit}`
 
-### 8.10 Generate AI Explanation
+State: `IMPLEMENTED`
 
-`POST /explanations`
+Response `200`:
 
-Status: `MVP_REQUIRED`
+```json
+{
+  "success": true,
+  "data": {
+    "h3Cell": "892a100d67bffff",
+    "coordinates": {
+      "lat": 40.758,
+      "lng": -73.9855
+    },
+    "startTime": "2026-07-01T00:00:00-04:00",
+    "endTime": "2026-07-02T00:00:00-04:00",
+    "forecast": [
+      {
+        "timestamp": "2026-07-01T16:30:00-04:00",
+        "period": "PM",
+        "busynessScore": 82,
+        "busynessLevel": "very_busy",
+        "pedestriansPredicted": 3067.3
+      }
+    ]
+  },
+  "meta": {
+    "count": 1,
+    "generatedAt": "2026-07-02T12:00:00Z"
+  }
+}
+```
 
-Implementation state: `PLANNED`
+Current limitation:
+
+- Prototype endpoint.
+- Reads Supabase `h3_grid_scores`.
+- May return empty `forecast` if no rows exist for the selected H3 cell and time range.
+- Future version should call FastAPI `/predict/future` for generated time points.
+
+### 8.7 Submit User Feedback
+
+`POST /feedback`
+
+State: `IMPLEMENTED`
 
 Request:
 
 ```json
 {
-  "locationId": "123456",
-  "targetTime": "2026-07-01T15:00:00-04:00",
-  "predictionId": "pred_123",
-  "language": "en",
-  "readingLevel": "simple",
-  "userContext": {
-    "sessionId": "sess_123",
-    "crowdSensitivity": "high",
-    "mobilityNeeds": ["step_free"]
+  "userId": "user_123",
+  "h3Cell": "892a100d67bffff",
+  "rating": 5,
+  "wasUseful": true,
+  "comment": "The prediction was useful."
+}
+```
+
+Response `201`:
+
+```json
+{
+  "success": true,
+  "data": {
+    "feedback": {
+      "id": "1",
+      "userId": "user_123",
+      "h3Cell": "892a100d67bffff",
+      "rating": 5,
+      "wasUseful": true,
+      "comment": "The prediction was useful.",
+      "createdAt": "2026-07-02T12:00:00Z"
+    }
+  },
+  "meta": {
+    "generatedAt": "2026-07-02T12:00:00Z"
   }
+}
+```
+
+### 8.8 Admin Prediction Statistics
+
+`GET /admin/stats/predictions?startDate={iso}&endDate={iso}`
+
+State: `IMPLEMENTED`
+
+Response `200`:
+
+```json
+{
+  "success": true,
+  "data": {
+    "totalPredictionRequests": 120,
+    "averageCrowdScore": 72.4,
+    "mlRequests": 90,
+    "cachedRequests": 30,
+    "cacheHitRate": 0.25,
+    "uniqueH3Cells": 42,
+    "mostRequestedH3Cells": [
+      {
+        "h3Cell": "892a100d67bffff",
+        "count": 14,
+        "averageCrowdScore": 85.2
+      }
+    ]
+  },
+  "meta": {
+    "startDate": null,
+    "endDate": null,
+    "generatedAt": "2026-07-02T12:00:00Z"
+  }
+}
+```
+
+## 9. Planned MVP Endpoints
+
+### 9.1 Prediction Explanation
+
+`POST /explanations`
+
+State: `PLANNED_MVP`
+
+Purpose:
+
+- Explain why an area is predicted to be busy or quiet.
+- Chat UI remains frontend-owned.
+- Backend can start with rule-based explanations grounded in prediction fields.
+
+Request:
+
+```json
+{
+  "lat": 40.758,
+  "lng": -73.9855,
+  "targetTime": "2026-07-01T16:30:00-04:00",
+  "h3Cell": "892a100d67bffff",
+  "busynessScore": 100,
+  "language": "en"
 }
 ```
 
@@ -914,137 +623,196 @@ Response `200`:
   "success": true,
   "data": {
     "explanation": {
-      "summary": "Times Square is expected to be very busy in the afternoon.",
+      "summary": "This area is expected to be very busy at the selected time.",
       "reasons": [
-        "This is usually a high-traffic time for tourist visits.",
-        "Nearby transport activity is expected to increase footfall."
+        "The selected time period usually has high activity.",
+        "Nearby transit and visitor activity may increase foot traffic.",
+        "The H3 grid cell has a high predicted crowd score."
       ],
-      "suggestedAction": "If you prefer a calmer visit, try going earlier in the morning or choosing a nearby park.",
-      "disclaimer": "This is a prediction, not a live crowd count."
+      "suggestedAction": "Consider choosing a quieter nearby grid area or a different time.",
+      "disclaimer": "This is a model prediction, not a live crowd count."
     }
   },
   "meta": {
-    "modelVersion": "busyness-v0.1",
-    "aiProvider": "server_configured"
+    "generatedAt": "2026-07-02T12:00:00Z"
   }
 }
 ```
 
-Implementation rules:
+### 9.2 Quieter Time Recommendation
 
-- Explanation must be grounded in prediction factors.
-- Do not send raw model internals directly to the frontend.
-- Always include a prediction disclaimer.
-- If GenAI fails, backend may return a template explanation instead of failing the whole flow.
+`POST /recommendations/quiet-times`
 
-### 8.11 Submit User Feedback
-
-`POST /feedback`
-
-Status: `MVP_REQUIRED`
-
-Implementation state: `PLANNED`
+State: `PLANNED_MVP`
 
 Request:
 
 ```json
 {
-  "sessionId": "sess_123",
-  "locationId": "123456",
-  "predictionId": "pred_123",
-  "recommendationId": "rec_place_1",
-  "rating": 4,
-  "wasUseful": true,
-  "actualBusynessLevel": "busy",
-  "comment": "The suggestion was helpful but the subway nearby was still crowded.",
-  "clientType": "mobile"
+  "lat": 40.758,
+  "lng": -73.9855,
+  "targetTime": "2026-07-01T16:30:00-04:00",
+  "startTime": "2026-07-01T09:00:00-04:00",
+  "endTime": "2026-07-01T21:00:00-04:00",
+  "limit": 3
 }
 ```
 
-Response `201`:
+Response `200`:
 
 ```json
 {
   "success": true,
   "data": {
-    "feedbackId": "fb_123",
-    "receivedAt": "2026-06-25T12:05:00Z"
+    "original": {
+      "targetTime": "2026-07-01T16:30:00-04:00",
+      "busynessScore": 86,
+      "busynessLevel": "very_busy"
+    },
+    "quietTimes": [
+      {
+        "targetTime": "2026-07-01T10:00:00-04:00",
+        "busynessScore": 42,
+        "busynessLevel": "moderate",
+        "confidence": 0.68,
+        "reason": "Predicted crowd score is lower earlier in the day."
+      }
+    ]
+  },
+  "meta": {
+    "generatedAt": "2026-07-02T12:00:00Z"
   }
 }
 ```
 
-Validation:
+Implementation options:
 
-- `rating`: optional integer 1-5
-- `wasUseful`: optional boolean
-- `actualBusynessLevel`: optional `BusynessLevel`
-- `comment`: optional, max 1000 characters
-- At least one of `rating`, `wasUseful`, `actualBusynessLevel`, or `comment` should be present.
+- query multiple rows from `h3_grid_scores`;
+- or call FastAPI `/predict/future` for multiple time points.
 
-### 8.12 Map Heatmap
+### 9.3 Read Current User Preferences
 
-`GET /map/heatmap?north={n}&south={s}&east={e}&west={w}&targetTime={iso}&type={type}`
+`GET /users/me/preferences`
 
-Status: `MVP_OPTIONAL`
+State: `PLANNED_MVP`
 
-Implementation state: `PLANNED`
+Future auth rule:
+
+- Requires valid Clerk JWT.
+- Backend derives `userId` from token, not from request body.
+
+Response `200`:
+
+```json
+{
+  "success": true,
+  "data": {
+    "userId": "user_123",
+    "preferences": {
+      "travelPace": "relaxed",
+      "interests": ["parks", "museums"],
+      "budgetRange": "medium",
+      "crowdTolerance": "low",
+      "mobilityNeeds": ["step_free"],
+      "dietaryNeeds": [],
+      "inclusionNeeds": ["quiet_spaces"],
+      "onboardingCompleted": true,
+      "updatedAt": "2026-07-02T12:00:00Z"
+    }
+  },
+  "meta": {
+    "generatedAt": "2026-07-02T12:00:00Z"
+  }
+}
+```
+
+### 9.4 Update Current User Preferences
+
+`PUT /users/me/preferences`
+
+State: `PLANNED_MVP`
+
+Request:
+
+```json
+{
+  "travelPace": "relaxed",
+  "interests": ["parks", "food", "museums"],
+  "budgetRange": "medium",
+  "crowdTolerance": "low",
+  "mobilityNeeds": ["step_free"],
+  "dietaryNeeds": ["vegetarian"],
+  "inclusionNeeds": ["quiet_spaces"],
+  "onboardingCompleted": true
+}
+```
+
+Response `200`:
+
+```json
+{
+  "success": true,
+  "data": {
+    "userId": "user_123",
+    "preferences": {
+      "travelPace": "relaxed",
+      "interests": ["parks", "food", "museums"],
+      "budgetRange": "medium",
+      "crowdTolerance": "low",
+      "mobilityNeeds": ["step_free"],
+      "dietaryNeeds": ["vegetarian"],
+      "inclusionNeeds": ["quiet_spaces"],
+      "onboardingCompleted": true,
+      "updatedAt": "2026-07-02T12:00:00Z"
+    }
+  },
+  "meta": {
+    "generatedAt": "2026-07-02T12:00:00Z"
+  }
+}
+```
+
+## 10. Planned After POI Source
+
+### 10.1 POI-Aware Place Recommendations
+
+`POST /recommendations/places`
+
+State: `PLANNED_AFTER_POI`
 
 Purpose:
 
-- Convenience endpoint for web map. If not implemented, frontend can call `/locations/nearby` then `/predictions/batch`.
-
-Response `200`:
-
-```json
-{
-  "success": true,
-  "data": {
-    "targetTime": "2026-07-01T15:00:00-04:00",
-    "bounds": {
-      "north": 40.79,
-      "south": 40.72,
-      "east": -73.93,
-      "west": -74.02
-    },
-    "points": [
-      {
-        "locationId": "123456",
-        "name": "Times Square",
-        "type": "attraction",
-        "coordinates": {
-          "lat": 40.758,
-          "lng": -73.9855
-        },
-        "busynessScore": 82,
-        "busynessLevel": "very_busy"
-      }
-    ]
-  }
-}
-```
-
-## 9. Optional / Future Endpoints
-
-### 9.1 Update Session Preferences
-
-`PUT /sessions/{sessionId}/preferences`
-
-Status: `MVP_OPTIONAL`
-
-Implementation state: `PLANNED`
+- Rank named candidate places using crowd prediction, distance, category, and user preferences.
+- The backend does not perform general place search.
+- Frontend or online POI API provides candidate places. Any `preferenceOverrides` field is temporary for planning; target implementation should read preferences from the authenticated Clerk user.
 
 Request:
 
 ```json
 {
-  "groupSize": 3,
-  "travelStyle": "work_friendly",
-  "crowdSensitivity": "high",
-  "noiseSensitivity": "high",
-  "mobilityNeeds": ["step_free"],
-  "dietaryRestrictions": ["vegetarian"],
-  "preferredLanguage": "en",
-  "transportModes": ["walk", "transit"]
+  "currentLocation": {
+    "lat": 40.758,
+    "lng": -73.9855
+  },
+  "targetTime": "2026-07-01T16:30:00-04:00",
+  "candidatePlaces": [
+    {
+      "placeId": "poi_1",
+      "name": "Central Park",
+      "category": "park",
+      "coordinates": {
+        "lat": 40.7812,
+        "lng": -73.9665
+      },
+      "source": "online_poi_api"
+    }
+  ],
+  "preferenceOverrides": {
+    "crowdTolerance": "low",
+    "interests": ["parks"],
+    "mobilityNeeds": ["step_free"]
+  },
+  "limit": 5
 }
 ```
 
@@ -1054,29 +822,159 @@ Response `200`:
 {
   "success": true,
   "data": {
-    "sessionId": "sess_123",
-    "preferences": {
-      "groupSize": 3,
-      "travelStyle": "work_friendly",
-      "crowdSensitivity": "high",
-      "noiseSensitivity": "high",
-      "mobilityNeeds": ["step_free"],
-      "dietaryRestrictions": ["vegetarian"],
-      "preferredLanguage": "en",
-      "transportModes": ["walk", "transit"]
-    },
-    "updatedAt": "2026-06-25T12:10:00Z"
+    "targetTime": "2026-07-01T16:30:00-04:00",
+    "recommendations": [
+      {
+        "type": "poi_place",
+        "rank": 1,
+        "place": {
+          "placeId": "poi_1",
+          "name": "Central Park",
+          "category": "park",
+          "coordinates": {
+            "lat": 40.7812,
+            "lng": -73.9665
+          },
+          "source": "online_poi_api"
+        },
+        "prediction": {
+          "h3Cell": "892a10089abffff",
+          "busynessScore": 44,
+          "busynessLevel": "moderate",
+          "confidence": 0.7,
+          "source": "ml_fastapi"
+        },
+        "distanceMeters": 2400,
+        "preferenceMatch": {
+          "matchesInterests": true,
+          "crowdToleranceMatch": true,
+          "mobilityMatch": null
+        },
+        "reason": "This place matches the selected interest and is predicted to be less crowded than the current area."
+      }
+    ],
+    "warnings": [
+      {
+        "code": "ACCESSIBILITY_DATA_UNAVAILABLE",
+        "message": "Accessibility matching is incomplete until the POI source provides accessibility fields."
+      }
+    ]
+  },
+  "meta": {
+    "count": 1,
+    "generatedAt": "2026-07-02T12:00:00Z"
   }
 }
 ```
 
-### 9.2 Safety-Aware Route Suggestion
+## 11. Future Full-Project Endpoints
 
-`POST /routes/safety-aware`
+### 11.1 Custom Itinerary
 
-Status: `FUTURE`
+`POST /itineraries`
 
-Implementation state: `FUTURE_SCOPE`
+State: `FUTURE`
+
+Request:
+
+```json
+{
+  "startLocation": {
+    "lat": 40.758,
+    "lng": -73.9855
+  },
+  "endLocation": {
+    "lat": 40.758,
+    "lng": -73.9855
+  },
+  "startTime": "2026-07-01T10:00:00-04:00",
+  "endTime": "2026-07-01T16:00:00-04:00",
+  "interests": ["food", "art", "parks"],
+  "candidatePlaces": [
+    {
+      "placeId": "poi_1",
+      "name": "Museum of Modern Art",
+      "category": "museum",
+      "coordinates": {
+        "lat": 40.7614,
+        "lng": -73.9776
+      },
+      "source": "online_poi_api"
+    }
+  ],
+  "preferenceOverrides": {
+    "crowdTolerance": "low",
+    "travelPace": "relaxed",
+    "mobilityNeeds": ["step_free"],
+    "dietaryNeeds": ["vegetarian"]
+  },
+  "constraints": {
+    "maxStops": 5,
+    "avoidVeryBusy": true,
+    "transportModes": ["walk", "transit"]
+  }
+}
+```
+
+Response `200`:
+
+```json
+{
+  "success": true,
+  "data": {
+    "itinerary": {
+      "id": "itin_123",
+      "summary": "A relaxed crowd-aware plan for food, art, and parks.",
+      "startTime": "2026-07-01T10:00:00-04:00",
+      "endTime": "2026-07-01T16:00:00-04:00",
+      "stops": [
+        {
+          "order": 1,
+          "arrivalTime": "2026-07-01T10:00:00-04:00",
+          "departureTime": "2026-07-01T11:30:00-04:00",
+          "place": {
+            "placeId": "poi_1",
+            "name": "Museum of Modern Art",
+            "category": "museum",
+            "coordinates": {
+              "lat": 40.7614,
+              "lng": -73.9776
+            }
+          },
+          "prediction": {
+            "busynessScore": 48,
+            "busynessLevel": "moderate",
+            "h3Cell": "892a100d2d7ffff"
+          },
+          "reason": "This stop matches the user's art interest and is predicted to be less crowded in the morning."
+        }
+      ],
+      "routeSummary": {
+        "totalDistanceMeters": 3200,
+        "totalTravelMinutes": 48,
+        "transportModes": ["walk", "transit"]
+      },
+      "warnings": [
+        {
+          "code": "POI_DATA_LIMITED",
+          "message": "Opening hours and accessibility data may be incomplete."
+        }
+      ],
+      "disclaimer": "Itinerary is generated from predictions and available POI data."
+    }
+  },
+  "meta": {
+    "planningMode": "future_llm_or_rule_based",
+    "generatedAt": "2026-07-02T12:00:00Z"
+  }
+}
+```
+
+### 11.2 Crowd-Aware Route Guidance
+
+`POST /routes/crowd-aware`
+
+State: `FUTURE`
 
 Request:
 
@@ -1086,14 +984,15 @@ Request:
     "lat": 40.758,
     "lng": -73.9855
   },
-  "destinationLocationId": "654321",
-  "targetTime": "2026-07-01T21:00:00-04:00",
-  "transportModes": ["walk", "transit"],
-  "userContext": {
-    "sessionId": "sess_123",
-    "travelStyle": "relaxed",
-    "mobilityNeeds": ["step_free"],
-    "crowdSensitivity": "high"
+  "destination": {
+    "lat": 40.7812,
+    "lng": -73.9665
+  },
+  "targetTime": "2026-07-01T16:30:00-04:00",
+  "transportMode": "walk",
+  "preferenceOverrides": {
+    "crowdTolerance": "low",
+    "mobilityNeeds": ["step_free"]
   }
 }
 ```
@@ -1106,33 +1005,50 @@ Response `200`:
   "data": {
     "routes": [
       {
-        "id": "route_123",
-        "mode": "walk",
-        "durationMinutes": 18,
-        "distanceMeters": 1300,
-        "crowdLevel": "moderate",
-        "safetyNotes": ["Well-lit route preferred where data is available."],
-        "accessibilityNotes": ["Step-free information may be incomplete."],
-        "geometry": {
-          "type": "LineString",
-          "coordinates": [
-            [-73.9855, 40.758],
-            [-73.9832, 40.7536]
-          ]
-        }
+        "routeId": "route_1",
+        "transportMode": "walk",
+        "durationMinutes": 32,
+        "distanceMeters": 2600,
+        "overallCrowdScore": 58,
+        "overallCrowdLevel": "moderate",
+        "segments": [
+          {
+            "order": 1,
+            "start": {
+              "lat": 40.758,
+              "lng": -73.9855
+            },
+            "end": {
+              "lat": 40.765,
+              "lng": -73.98
+            },
+            "estimatedMinutes": 8,
+            "crowdScore": 72,
+            "crowdLevel": "busy",
+            "h3Cells": ["892a100d67bffff"]
+          }
+        ],
+        "warnings": [
+          {
+            "code": "ROUTING_DATA_LIMITED",
+            "message": "Route guidance depends on external routing data."
+          }
+        ],
+        "reason": "This route avoids the busiest nearby H3 cells where possible."
       }
     ]
+  },
+  "meta": {
+    "generatedAt": "2026-07-02T12:00:00Z"
   }
 }
 ```
 
-### 9.3 Admin Prediction Statistics
+### 11.3 Admin Feedback Statistics
 
-`GET /admin/stats/predictions?startDate={date}&endDate={date}`
+`GET /admin/stats/feedback?startDate={iso}&endDate={iso}`
 
-Status: `FUTURE`
-
-Implementation state: `FUTURE_SCOPE`
+State: `FUTURE`
 
 Response `200`:
 
@@ -1140,340 +1056,223 @@ Response `200`:
 {
   "success": true,
   "data": {
-    "totalPredictionRequests": 1200,
-    "averageLatencyMs": 180,
-    "cacheHitRate": 0.64,
-    "mostRequestedLocations": [
+    "totalFeedback": 85,
+    "averageRating": 4.2,
+    "usefulRate": 0.78,
+    "feedbackByH3Cell": [
       {
-        "locationId": "123456",
-        "name": "Times Square",
-        "count": 210
+        "h3Cell": "892a100d67bffff",
+        "count": 12,
+        "averageRating": 4.0,
+        "usefulRate": 0.75
       }
     ],
-    "feedbackAverageRating": 4.1
+    "recentComments": [
+      {
+        "id": "12",
+        "h3Cell": "892a100d67bffff",
+        "rating": 5,
+        "wasUseful": true,
+        "comment": "The prediction was useful.",
+        "createdAt": "2026-07-02T12:00:00Z"
+      }
+    ]
+  },
+  "meta": {
+    "startDate": null,
+    "endDate": null,
+    "generatedAt": "2026-07-02T12:00:00Z"
   }
 }
 ```
 
-## 10. ML Integration Contract
+## 12. Internal ML Integration
 
-The public API does not require the ML component to run as a REST service. Web and mobile clients should only call the public backend endpoints such as `/predictions`, `/locations/{locationId}/forecast`, and `/recommendations`.
+Frontend should not call FastAPI directly.
 
-For the team handoff, Data & ML Lead can provide the prediction layer in one of three supported formats:
-
-| Option | ML deliverable | Backend work |
-|---|---|---|
-| A | Precomputed prediction CSV files | Import CSV into PostgreSQL `prediction_cache`; Express reads from DB |
-| B | Model artifact such as `.pkl`, `.joblib`, or `.pt` plus feature schema | Backend calls a small Python prediction script or scheduled batch job |
-| C | Python REST service using Flask/FastAPI | Express calls ML service over HTTP |
-
-
-### 10.1 Option A - Precomputed Prediction CSV Handoff
-
-Status: `INTERNAL`
-
-Implementation state: `INTERNAL_OPTION`
-
-ML deliverable:
+Express uses:
 
 ```text
-data/predictions/prediction_cache.csv
+ML_API_BASE_URL=http://localhost:8000
 ```
 
-Required CSV columns:
-
-| Column | Type | Example | Notes |
-|---|---|---|---|
-| `location_id` | string | `123456` | Must match the public `locationId` (`locations.osm_id` as a string) |
-| `target_time` | ISO datetime | `2026-07-01T15:00:00-04:00` | Time bucket for prediction |
-| `duration_minutes` | integer | `60` | Default 60 |
-| `busyness_score` | integer | `82` | 0-100 |
-| `busyness_level` | string | `very_busy` | Derived from score |
-| `confidence` | float | `0.78` | 0-1 |
-| `baseline_score` | integer/null | `64` | Optional |
-| `model_version` | string | `busyness-v0.1` | Required |
-| `factors_json` | JSON string | `[{...}]` | Optional explainability factors |
-| `generated_at` | ISO datetime | `2026-06-25T12:00:00Z` | When ML output was generated |
-
-Example row:
-
-```csv
-location_id,target_time,duration_minutes,busyness_score,busyness_level,confidence,baseline_score,model_version,factors_json,generated_at
-123456,2026-07-01T15:00:00-04:00,60,82,very_busy,0.78,64,busyness-v0.1,"[{""name"":""time_of_day"",""impact"":""high"",""direction"":""increase""}]",2026-06-25T12:00:00Z
-```
-
-Backend behavior:
-
-- Import CSV into backend-managed prediction storage.
-- Public `POST /predictions` reads the closest matching `location_id + target_time + model_version`.
-- Public forecast endpoint reads multiple rows from `prediction_cache`.
-- If no prediction output exists, return `PREDICTION_UNAVAILABLE`.
-
-### 10.2 Option B - Model File Handoff
-
-Status: `INTERNAL`
-
-Implementation state: `INTERNAL_OPTION`
-
-ML deliverables:
+Current FastAPI ML endpoints:
 
 ```text
-ml/model.pkl
-ml/feature_schema.json
-ml/predict.py
-ml/requirements.txt
+GET  /
+POST /predict/crowd
+POST /predict/future
+GET  /predict/crowd-score
 ```
 
-Required rule:
-
-- If ML Lead provides a `.pkl`, `.joblib`, or `.pt` file, they should also provide a runnable `predict.py` script.
-- Backend should not be responsible for reverse-engineering a notebook.
-
-Expected command contract:
-
-```bash
-python ml/predict.py --input tmp/prediction_input.json --output tmp/prediction_output.json
-```
-
-Input JSON:
-
-```json
-{
-  "items": [
-    {
-      "locationId": "123456",
-      "features": {
-        "lat": 40.758,
-        "lng": -73.9855,
-        "hourOfDay": 15,
-        "dayOfWeek": 3,
-        "isWeekend": false,
-        "weatherCode": "clear",
-        "nearbyTransitActivityScore": 0.72,
-        "historicalDemandScore": 0.81
-      }
-    }
-  ]
-}
-```
-
-Output JSON:
-
-```json
-{
-  "results": [
-    {
-      "locationId": "123456",
-      "busynessScore": 82,
-      "confidence": 0.78,
-      "modelVersion": "busyness-v0.1",
-      "featureContributions": [
-        {
-          "name": "historicalDemandScore",
-          "value": 0.81,
-          "impact": 0.31
-        }
-      ]
-    }
-  ],
-  "errors": []
-}
-```
-
-Backend behavior:
-
-- Express can call this script during a batch import job, not necessarily during every user request.
-- Recommended pattern: run `predict.py` offline or on a schedule, save results into `prediction_cache`, then serve users from PostgreSQL.
-- Avoid calling Python synchronously on every request unless performance is acceptable.
-
-### 10.3 Option C - Optional REST ML Service
-
-Status: `INTERNAL`
-
-Implementation state: `INTERNAL_OPTION`
-
-These endpoints are only needed if Data & ML Lead provides and maintains a Python Flask/FastAPI service. They should not be called by web/mobile clients.
-
-#### 10.3.1 Predict Busyness
+### 12.1 Internal Single ML Prediction
 
 `POST /internal/ml/predict-busyness`
 
+State: `INTERNAL`
+
 Request:
 
 ```json
 {
-  "locationId": "123456",
-  "features": {
-    "lat": 40.758,
-    "lng": -73.9855,
-    "hourOfDay": 15,
-    "dayOfWeek": 3,
-    "isWeekend": false,
-    "weatherCode": "clear",
-    "nearbyTransitActivityScore": 0.72,
-    "historicalDemandScore": 0.81,
-    "poiDensityScore": 0.66,
-    "eventImpactScore": 0.2
+  "lat": 40.758,
+  "lng": -73.9855,
+  "targetTime": "2026-07-01T16:30:00-04:00",
+  "durationMinutes": 60
+}
+```
+
+Response `200`:
+
+```json
+{
+  "success": true,
+  "data": {
+    "prediction": {
+      "h3Cell": "892a100d67bffff",
+      "coordinates": {
+        "lat": 40.758,
+        "lng": -73.9855
+      },
+      "targetTime": "2026-07-01T16:30:00-04:00",
+      "period": "PM",
+      "busynessScore": 100,
+      "busynessLevel": "very_busy",
+      "crowdCategory": "Very Busy",
+      "pedestriansPredicted": 3067.3,
+      "modelVersion": "ml-fastapi-v1.0",
+      "source": "ml_fastapi"
+    }
+  },
+  "meta": {
+    "generatedAt": "2026-07-02T12:00:00Z"
   }
 }
 ```
 
-Response:
+Notes:
 
-```json
-{
-  "busynessScore": 82,
-  "confidence": 0.78,
-  "modelVersion": "busyness-v0.1",
-  "featureContributions": [
-    {
-      "name": "historicalDemandScore",
-      "value": 0.81,
-      "impact": 0.31
-    },
-    {
-      "name": "hourOfDay",
-      "value": 15,
-      "impact": 0.18
-    }
-  ]
-}
-```
+- This endpoint is not required by frontend/mobile.
+- Current Express code already calls FastAPI internally.
+- This route can be added later for internal testing if useful.
 
-#### 10.3.2 Batch Predict Busyness
+### 12.2 Internal Batch ML Prediction
 
 `POST /internal/ml/predict-busyness-batch`
+
+State: `INTERNAL`
 
 Request:
 
 ```json
 {
-  "items": [
+  "targetTime": "2026-07-01T16:30:00-04:00",
+  "locations": [
     {
-      "locationId": "123456",
-      "features": {
-        "lat": 40.758,
-        "lng": -73.9855,
-        "hourOfDay": 15,
-        "dayOfWeek": 3,
-        "historicalDemandScore": 0.81
-      }
+      "locationId": "times-square",
+      "lat": 40.758,
+      "lng": -73.9855
     }
   ]
 }
 ```
 
-Response:
+Response `200`:
 
 ```json
 {
-  "results": [
-    {
-      "locationId": "123456",
-      "busynessScore": 82,
-      "confidence": 0.78,
-      "modelVersion": "busyness-v0.1"
-    }
-  ],
-  "errors": []
+  "success": true,
+  "data": {
+    "targetTime": "2026-07-01T16:30:00-04:00",
+    "results": [
+      {
+        "locationId": "times-square",
+        "h3Cell": "892a100d67bffff",
+        "busynessScore": 100,
+        "busynessLevel": "very_busy",
+        "crowdCategory": "Very Busy",
+        "pedestriansPredicted": 3067.3,
+        "source": "ml_fastapi"
+      }
+    ],
+    "errors": []
+  },
+  "meta": {
+    "count": 1,
+    "errorCount": 0,
+    "generatedAt": "2026-07-02T12:00:00Z"
+  }
 }
 ```
-## 11. Error Codes
+
+Notes:
+
+- If FastAPI later provides a real batch endpoint, Express should call that instead of looping through single predictions.
+- Partial success should be supported.
+
+## 13. Data / ML Notes
+
+Current ML crowd prediction:
+
+- Manhattan is divided into 524 H3 grid cells.
+- Crowd prediction is built and being tested.
+- The model uses pedestrian counts, transit activity, POI density, weather, events, and holidays.
+- Only some H3 cells have real pedestrian ground truth; many predictions rely on proxy features.
+- Current coverage is Manhattan-only.
+
+Recommendation and custom itinerary:
+
+- Planned as Feature 2 in Data/ML.
+- Requires POI catalog or online POI provider.
+- May later use an LLM/tool-calling agent that calls crowd prediction as a tool.
+
+## 14. Error Codes
 
 | Code | HTTP | Meaning |
 |---|---:|---|
-| `INVALID_JSON` | 400 | Request body is not valid JSON |
 | `DATABASE_UNAVAILABLE` | 503 | Database connection failed |
-| `INVALID_QUERY` | 400 | Query string missing or malformed |
-| `INVALID_LOCATION_TYPE` | 400 | Unknown location type |
-| `INVALID_TIME_RANGE` | 422 | Time range invalid or too large |
+| `INVALID_QUERY` | 400/422 | Missing or invalid request fields |
 | `INVALID_COORDINATES` | 422 | Latitude/longitude invalid |
-| `OUTSIDE_SUPPORTED_AREA` | 422 | Location is outside supported Manhattan area |
-| `LOCATION_NOT_FOUND` | 404 | Location ID does not exist |
-| `SESSION_NOT_FOUND` | 404 | Session ID does not exist or expired |
-| `PREDICTION_NOT_FOUND` | 404 | Prediction ID does not exist |
-| `PREDICTION_UNAVAILABLE` | 503 | Model cannot produce a prediction |
-| `MODEL_SERVICE_UNAVAILABLE` | 503 | ML service timeout/down |
-| `EXPLANATION_UNAVAILABLE` | 503 | AI explanation failed and fallback unavailable |
-| `ACCESSIBILITY_DATA_UNAVAILABLE` | 200/422 | Use warning for partial data; error only when strict filter required |
-| `RATE_LIMITED` | 429 | Too many requests |
-| `UNAUTHORIZED` | 401 | Missing/invalid auth |
-| `FORBIDDEN` | 403 | Valid auth but insufficient role |
+| `LOCATION_OUT_OF_COVERAGE` | 422 | Coordinate outside Manhattan coverage |
+| `PREDICTION_UNAVAILABLE` | 503 | No ML or fallback prediction available |
+| `ML_API_UNAVAILABLE` | 503 | FastAPI ML service unavailable |
+| `INVALID_RATING` | 422 | Feedback rating must be 1-5 |
+| `PREFERENCES_NOT_FOUND` | 404 | User preferences do not exist yet |
+| `UNAUTHORIZED` | 401 | Future auth token missing/invalid |
+| `FORBIDDEN` | 403 | Future auth valid but not allowed |
 | `INTERNAL_ERROR` | 500 | Unexpected server failure |
 
-## 12. Frontend/Mobile Integration Flow
+## 15. Frontend Integration Flow
 
-Primary user flow:
+Current flow:
 
-1. Optional: create anonymous session with `POST /sessions` if persistent preferences are needed.
-2. Search place: `GET /locations/search`.
-3. Load selected place: `GET /locations/{locationId}`.
-4. Get prediction: `POST /predictions`.
-5. Get explanation: `POST /explanations`.
-6. Get quieter alternatives: `POST /recommendations`.
-7. Show map context: `GET /locations/nearby` then `POST /predictions/batch`.
-8. Submit feedback: `POST /feedback`.
+1. User logs in through Clerk on frontend.
+2. User searches/selects a place through frontend or online POI/geocoding API.
+3. Frontend obtains `lat`, `lng`, optional place name/category, and `targetTime`.
+4. Frontend calls `POST /predictions`.
+5. Frontend optionally calls `GET /map/heatmap`.
+6. Frontend optionally calls `POST /recommendations`.
+7. Frontend submits feedback with `POST /feedback`.
 
-Current integration flow:
+Future POI-aware flow:
 
-1. Frontend/mobile can integrate location search and detail now.
-2. Frontend/mobile should mock prediction, recommendation, explanation, and feedback responses until backend implements those endpoints.
-3. Backend should keep returning the current location shape unless the contract is deliberately updated and communicated.
+1. Frontend obtains candidate POIs from online API.
+2. Frontend sends candidate POIs to `POST /recommendations/places`.
+3. Backend ranks candidates using crowd prediction and preferences.
+4. Future itinerary endpoint sequences places into a timed plan.
 
-Fallback rules:
+## 16. Backend Implementation Priority
 
-- If `/explanations` fails, frontend should still display prediction and recommendations.
-- If `/recommendations` fails, frontend should still display forecast.
-- If `/predictions/batch` partly fails, map should render successful locations and ignore failed ones.
+Completed:
 
-## 13. Non-Functional Requirements
-
-| Requirement | Project target |
-|---|---|
-| Single cached prediction latency | under 500 ms |
-| Single uncached prediction latency | under 2 s |
-| Batch size | max 100 locations |
-| Forecast window | max 7 days |
-| Public API rate limit | Suggested 60 requests/minute/session |
-| Timezone | Store UTC, present/request ISO 8601; use New York local time for model features |
-| Accessibility | Return text labels, not only color scores |
-| GenAI safety | Ground explanations in prediction factors and include disclaimer |
-| Data transparency | Include `confidence`, `modelVersion`, and `dataFreshness` where possible |
-
-## 14. Backend Implementation Priority
-
-The first three endpoints are already implemented in the Express backend. Build the remaining endpoints in this order:
-
-1. `POST /predictions` after Data & ML output is available.
-2. `GET /locations/{locationId}/forecast`.
-3. `GET /locations/nearby`.
-4. `POST /predictions/batch`.
-5. `POST /recommendations`.
-6. `POST /explanations` after prediction factors or GenAI strategy is available.
-7. `POST /feedback`.
-8. Optional: `POST /sessions`.
-9. Optional: `/map/heatmap`.
-
-This order lets frontend/mobile integrate early while the ML model, recommendation logic, and GenAI layer continue improving.
-
-## 15. Team Decisions To Agree
-
-These should be agreed:
-
-| Decision | Recommended answer |
-|---|---|
-| Canonical location ID | Use `locations.osm_id` as the public `locationId` string for now. Return `externalId` as `osm_<osm_id>`. Do not expose internal database IDs to clients. |
-| Timezone | Client sends ISO 8601; backend converts model features to New York local time |
-| GenAI failure behavior | Return template explanation fallback |
-| Heatmap implementation | Prefer `nearby + batch`; `/map/heatmap` optional |
-| Safety-aware routing | Future, unless already available from frontend |
-
-## 16. Review Checklist / Next Improvements
-
-Before moving from contract review to implementation, the team should confirm:
-
-1. Data & ML handoff format: choose CSV, model file, or REST service. CSV is the simplest MVP path.
-2. Prediction output shape: confirm `busynessScore`, `busynessLevel`, `confidence`, `modelVersion`, and optional `factors`.
-3. Location enrichment: decide whether address, borough, accessibility, opening hours, and tags are required for MVP or can remain planned fields.
-4. Session behavior: keep sessions optional unless the frontend/mobile flow truly needs stored preferences.
-5. Human-friendly docs: after this contract is stable, generate the public/team docs from this file so the friendly docs and contract do not drift.
+1. Health check
+2. Supabase connection
+3. H3 grid data import
+4. Single prediction
+5. Batch prediction
+6. ML FastAPI gateway integration
+7. Heatmap
+8. Basic H3 recommendations
+9. Feedback
+10. Prediction logging
+11. Admin stats
