@@ -40,7 +40,6 @@ spec:
     string(name: 'IMAGE_TAG', defaultValue: 'latest', description: 'GHCR image tag to deploy', trim: true)
     string(name: 'GIT_COMMIT_SHA', defaultValue: '', description: 'Commit SHA that produced the image', trim: true)
     string(name: 'GIT_BRANCH', defaultValue: 'main', description: 'Git branch that produced the image', trim: true)
-    string(name: 'ENV_FILE', defaultValue: '/opt/zentra/backend/.env', description: 'Environment file already present on the target server', trim: true)
   }
 
   environment {
@@ -60,6 +59,7 @@ spec:
 
         withCredentials([
           string(credentialsId: 'hel-host', variable: 'DEPLOY_HOST'),
+          file(credentialsId: 'zentra-backend.env', variable: 'BACKEND_ENV_FILE'),
           sshUserPrivateKey(credentialsId: 'server-ssh-key', keyFileVariable: 'SSH_KEY', usernameVariable: 'SSH_USER')
         ]) {
           sh(label: 'Deploy backend container', script: '''#!/usr/bin/env bash
@@ -70,8 +70,27 @@ IMAGE="${IMAGE_NAME}:${IMAGE_TAG}"
 [ -n "${SSH_USER}" ] || { echo "SSH_USER is empty"; exit 1; }
 [ -n "${IMAGE_NAME}" ] || { echo "IMAGE_NAME is empty"; exit 1; }
 [ -n "${IMAGE_TAG}" ] || { echo "IMAGE_TAG is empty"; exit 1; }
+[ -f "${BACKEND_ENV_FILE}" ] || { echo "BACKEND_ENV_FILE credential file is missing"; exit 1; }
 
 chmod 600 "${SSH_KEY}"
+
+ssh_opts=(
+  -i "${SSH_KEY}"
+  -o IdentitiesOnly=yes
+  -o StrictHostKeyChecking=accept-new
+)
+
+REMOTE_ENV_FILE=""
+cleanup_remote_env() {
+  if [ -n "${REMOTE_ENV_FILE}" ]; then
+    ssh "${ssh_opts[@]}" "${SSH_USER}@${DEPLOY_HOST}" "rm -f $(printf '%q' "${REMOTE_ENV_FILE}")" >/dev/null 2>&1 || true
+  fi
+}
+trap cleanup_remote_env EXIT
+
+REMOTE_ENV_FILE="$(ssh "${ssh_opts[@]}" "${SSH_USER}@${DEPLOY_HOST}" 'mktemp /tmp/zentra-backend.env.XXXXXX')"
+scp "${ssh_opts[@]}" "${BACKEND_ENV_FILE}" "${SSH_USER}@${DEPLOY_HOST}:${REMOTE_ENV_FILE}"
+ssh "${ssh_opts[@]}" "${SSH_USER}@${DEPLOY_HOST}" "chmod 600 $(printf '%q' "${REMOTE_ENV_FILE}")"
 
 remote_env=(
   "IMAGE=$(printf '%q' "${IMAGE}")"
@@ -79,15 +98,13 @@ remote_env=(
   "NETWORK_NAME=$(printf '%q' "${NETWORK_NAME}")"
   "HOST_PORT=$(printf '%q' "${HOST_PORT}")"
   "CONTAINER_PORT=$(printf '%q' "${CONTAINER_PORT}")"
-  "ENV_FILE=$(printf '%q' "${ENV_FILE}")"
+  "ENV_FILE=$(printf '%q' "${REMOTE_ENV_FILE}")"
   "HEALTH_PATH=$(printf '%q' "${HEALTH_PATH}")"
   "HEALTH_RETRIES=$(printf '%q' "${HEALTH_RETRIES}")"
   "HEALTH_INTERVAL_SEC=$(printf '%q' "${HEALTH_INTERVAL_SEC}")"
 )
 
-ssh -i "${SSH_KEY}" \
-  -o IdentitiesOnly=yes \
-  -o StrictHostKeyChecking=accept-new \
+ssh "${ssh_opts[@]}" \
   "${SSH_USER}@${DEPLOY_HOST}" \
   "${remote_env[*]} bash -s" <<'REMOTE'
 set -euo pipefail
