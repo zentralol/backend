@@ -1,5 +1,34 @@
 pipeline {
-  agent any
+  agent {
+    kubernetes {
+      cloud 'kubernetes'
+      defaultContainer 'docker'
+      yaml '''
+apiVersion: v1
+kind: Pod
+metadata:
+  labels:
+    jenkins/label: zentra-backend-deploy
+spec:
+  containers:
+    - name: docker
+      image: docker:27-cli
+      command:
+        - sleep
+      args:
+        - "9999999"
+      tty: true
+      workingDir: /home/jenkins/agent
+      volumeMounts:
+        - mountPath: /var/run/docker.sock
+          name: docker-sock
+  volumes:
+    - name: docker-sock
+      hostPath:
+        path: /var/run/docker.sock
+'''
+    }
+  }
 
   options {
     timestamps()
@@ -27,6 +56,8 @@ pipeline {
   stages {
     stage('Deploy') {
       steps {
+        sh(label: 'Install deploy tools', script: 'apk add --no-cache bash curl openssh-client')
+
         withCredentials([
           string(credentialsId: 'hel-host', variable: 'DEPLOY_HOST'),
           sshUserPrivateKey(credentialsId: 'server-ssh-key', keyFileVariable: 'SSH_KEY', usernameVariable: 'SSH_USER')
