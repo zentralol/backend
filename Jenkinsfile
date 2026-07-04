@@ -16,6 +16,7 @@ pipeline {
 
   environment {
     CONTAINER_NAME = 'zentra-backend'
+    NETWORK_NAME = 'zentra'
     HOST_PORT = '3000'
     CONTAINER_PORT = '3000'
     HEALTH_PATH = '/api/v1/health'
@@ -44,6 +45,7 @@ chmod 600 "${SSH_KEY}"
 remote_env=(
   "IMAGE=$(printf '%q' "${IMAGE}")"
   "CONTAINER_NAME=$(printf '%q' "${CONTAINER_NAME}")"
+  "NETWORK_NAME=$(printf '%q' "${NETWORK_NAME}")"
   "HOST_PORT=$(printf '%q' "${HOST_PORT}")"
   "CONTAINER_PORT=$(printf '%q' "${CONTAINER_PORT}")"
   "ENV_FILE=$(printf '%q' "${ENV_FILE}")"
@@ -66,17 +68,23 @@ command -v docker >/dev/null 2>&1 || die "docker not found on target server"
 command -v curl >/dev/null 2>&1 || die "curl not found on target server"
 [ -f "${ENV_FILE}" ] || die "env file not found: ${ENV_FILE}"
 
-log "Pulling image: ${IMAGE}"
-docker pull "${IMAGE}"
-
 if docker ps -a --format '{{.Names}}' | grep -qx "${CONTAINER_NAME}"; then
   log "Removing existing container: ${CONTAINER_NAME}"
   docker rm -f "${CONTAINER_NAME}" >/dev/null
 fi
 
+if ! docker network inspect "${NETWORK_NAME}" >/dev/null 2>&1; then
+  log "Creating Docker network: ${NETWORK_NAME}"
+  docker network create "${NETWORK_NAME}" >/dev/null
+fi
+
+log "Pulling image: ${IMAGE}"
+docker pull "${IMAGE}"
+
 log "Starting container: ${CONTAINER_NAME}"
 docker run -d \
   --name "${CONTAINER_NAME}" \
+  --network "${NETWORK_NAME}" \
   --restart unless-stopped \
   -p "${HOST_PORT}:${CONTAINER_PORT}" \
   --env-file "${ENV_FILE}" \
