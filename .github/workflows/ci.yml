@@ -17,12 +17,18 @@ jobs:
   build-image:
     name: Build image
     runs-on: ubuntu-latest
+    outputs:
+      image_tag: ${{ steps.image_tag.outputs.value }}
     permissions:
       contents: read
       packages: write
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Set image tag
+        id: image_tag
+        run: echo "value=${GITHUB_SHA::7}" >> "${GITHUB_OUTPUT}"
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -54,7 +60,7 @@ jobs:
           images: ${{ env.IMAGE_NAME }}
           tags: |
             type=ref,event=branch
-            type=sha,prefix=,format=long
+            type=raw,value=${{ steps.image_tag.outputs.value }}
             type=raw,value=latest,enable={{is_default_branch}}
 
       - name: Build and push Docker image
@@ -75,7 +81,7 @@ jobs:
         env:
           JENKINS_URL: ${{ secrets.JENKINS_URL || vars.JENKINS_URL }}
           JENKINS_TOKEN: ${{ secrets.JENKINS_TOKEN || vars.JENKINS_TOKEN }}
-          IMAGE_TAG: ${{ github.sha }}
+          IMAGE_TAG: ${{ needs.build-image.outputs.image_tag }}
           GIT_BRANCH: ${{ github.ref_name }}
           GIT_COMMIT_SHA: ${{ github.sha }}
         run: |
