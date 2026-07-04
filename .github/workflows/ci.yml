@@ -80,6 +80,8 @@ jobs:
       - name: Trigger Jenkins deploy
         env:
           JENKINS_URL: ${{ secrets.JENKINS_URL || vars.JENKINS_URL }}
+          JENKINS_USER: ${{ secrets.JENKINS_USER || vars.JENKINS_USER }}
+          JENKINS_API_TOKEN: ${{ secrets.JENKINS_API_TOKEN }}
           JENKINS_TOKEN: ${{ secrets.JENKINS_TOKEN || vars.JENKINS_TOKEN }}
           IMAGE_TAG: ${{ needs.build-image.outputs.image_tag }}
           GIT_BRANCH: ${{ github.ref_name }}
@@ -88,8 +90,11 @@ jobs:
           set -euo pipefail
 
           [ -n "${JENKINS_URL}" ] || { echo "JENKINS_URL is not configured"; exit 1; }
+          [ -n "${JENKINS_USER}" ] || { echo "JENKINS_USER is not configured"; exit 1; }
+          [ -n "${JENKINS_API_TOKEN}" ] || { echo "JENKINS_API_TOKEN is not configured"; exit 1; }
           [ -n "${JENKINS_TOKEN}" ] || { echo "JENKINS_TOKEN is not configured"; exit 1; }
 
+          printf '::add-mask::%s\n' "${JENKINS_API_TOKEN}"
           printf '::add-mask::%s\n' "${JENKINS_TOKEN}"
 
           JENKINS_BASE_URL="${JENKINS_URL%/}"
@@ -110,7 +115,8 @@ jobs:
 
           echo "Triggering Jenkins deployment at ${JENKINS_BUILD_URL}"
 
-          curl --fail --show-error --silent --location --get \
+          curl --fail --show-error --silent --location --request POST \
+            --user "${JENKINS_USER}:${JENKINS_API_TOKEN}" \
             "${JENKINS_BUILD_URL}" \
             --data-urlencode "token=${JENKINS_TOKEN}" \
             --data-urlencode "IMAGE_NAME=${IMAGE_NAME}" \
