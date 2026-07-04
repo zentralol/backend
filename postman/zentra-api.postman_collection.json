@@ -1,0 +1,480 @@
+{
+  "info": {
+    "_postman_id": "zentra-api-v1-collection",
+    "name": "Zentra API v1",
+    "description": "Zentra Backend API collection generated from server.js.\n\nBase URL: {{baseUrl}}\n\nSwitch environment (either way):\n1. Set `env` to `development` or `production` — baseUrl syncs automatically when env changes.\n2. Or manually set `baseUrl` Current Value — it will not be overwritten until you change `env`.\n\nPresets:\n- development: http://localhost:3000\n- production: https://backend.zentra.lol\n\nShared test variables: lat, lng, targetTime, startTime, endTime, startDate, endDate, locationId, h3Cell, searchQuery, locationType",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "env",
+      "value": "development",
+      "type": "string",
+      "description": "Active environment. Options: development | production"
+    },
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:3000",
+      "type": "string",
+      "description": "Active base URL. Auto-synced when env changes; manual edits are preserved."
+    },
+    {
+      "key": "lat",
+      "value": "40.758",
+      "type": "string",
+      "description": "Times Square latitude (within Manhattan bounds)"
+    },
+    {
+      "key": "lng",
+      "value": "-73.985",
+      "type": "string",
+      "description": "Times Square longitude"
+    },
+    {
+      "key": "targetTime",
+      "value": "2026-07-04T18:00:00.000Z",
+      "type": "string",
+      "description": "Target time for predictions/recommendations (ISO 8601)"
+    },
+    {
+      "key": "startTime",
+      "value": "2026-07-04T12:00:00.000Z",
+      "type": "string",
+      "description": "Forecast start time (ISO 8601)"
+    },
+    {
+      "key": "endTime",
+      "value": "2026-07-04T18:00:00.000Z",
+      "type": "string",
+      "description": "Forecast end time (ISO 8601)"
+    },
+    {
+      "key": "startDate",
+      "value": "2026-07-01T00:00:00.000Z",
+      "type": "string",
+      "description": "Admin stats filter start date (optional, ISO 8601)"
+    },
+    {
+      "key": "endDate",
+      "value": "2026-07-04T23:59:59.999Z",
+      "type": "string",
+      "description": "Admin stats filter end date (optional, ISO 8601)"
+    },
+    {
+      "key": "locationId",
+      "value": "123456789",
+      "type": "string",
+      "description": "OSM location ID"
+    },
+    {
+      "key": "h3Cell",
+      "value": "892a100d6c7ffff",
+      "type": "string",
+      "description": "H3 cell identifier (for feedback)"
+    },
+    {
+      "key": "searchQuery",
+      "value": "times",
+      "type": "string",
+      "description": "Location search keyword"
+    },
+    {
+      "key": "locationType",
+      "value": "attraction",
+      "type": "string",
+      "description": "Location category filter (optional)"
+    }
+  ],
+  "event": [
+    {
+      "listen": "prerequest",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "const environments = {",
+          "    development: 'http://localhost:3000',",
+          "    production: 'https://backend.zentra.lol'",
+          "};",
+          "",
+          "const env = pm.collectionVariables.get('env') || 'development';",
+          "const lastSyncedEnv = pm.collectionVariables.get('_lastSyncedEnv');",
+          "const mappedBaseUrl = environments[env] || environments.development;",
+          "",
+          "if (lastSyncedEnv !== env) {",
+          "    pm.collectionVariables.set('baseUrl', mappedBaseUrl);",
+          "    pm.collectionVariables.set('_lastSyncedEnv', env);",
+          "}"
+        ]
+      }
+    }
+  ],
+  "item": [
+    {
+      "name": "Health",
+      "item": [
+        {
+          "name": "Health Check",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/health",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "health"]
+            },
+            "description": "Check API and database connectivity.\n\nSuccess (200): data.status='ok', data.apiVersion='v1', data.database='connected', data.uptimeSeconds\nError (503): error.code='DATABASE_UNAVAILABLE'"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Locations",
+      "item": [
+        {
+          "name": "Search Locations",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/locations/search?q={{searchQuery}}&type={{locationType}}&limit=10",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "locations", "search"],
+              "query": [
+                {
+                  "key": "q",
+                  "value": "{{searchQuery}}",
+                  "description": "Name search (ILIKE). Optional, default ''."
+                },
+                {
+                  "key": "type",
+                  "value": "{{locationType}}",
+                  "description": "Category filter. Optional, default ''."
+                },
+                {
+                  "key": "limit",
+                  "value": "10",
+                  "description": "Max results. Optional, default 10, max 50."
+                }
+              ]
+            },
+            "description": "Search locations by name and optional category.\n\nQuery params:\n- q (Optional): search text\n- type (Optional): category filter, e.g. museum, park, attraction\n- limit (Optional): default 10, max 50\n\nSuccess (200): data.query, data.results[] with id, externalId, name, type, coordinates, zoneId\nError (500): error.code='INTERNAL_ERROR'"
+          },
+          "response": []
+        },
+        {
+          "name": "Get Location by ID",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/locations/{{locationId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "locations", ":locationId"],
+              "variable": [
+                {
+                  "key": "locationId",
+                  "value": "{{locationId}}",
+                  "description": "OSM ID (osm_id). Required path param."
+                }
+              ]
+            },
+            "description": "Get one location by OSM ID.\n\nPath param:\n- locationId (Required): OpenStreetMap ID as string\n\nSuccess (200): data.location\nError (404): error.code='LOCATION_NOT_FOUND'\nError (500): error.code='INTERNAL_ERROR'"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Map",
+      "item": [
+        {
+          "name": "Get Heatmap",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/map/heatmap?targetTime={{targetTime}}&limit=100&source=auto",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "map", "heatmap"],
+              "query": [
+                {
+                  "key": "targetTime",
+                  "value": "{{targetTime}}",
+                  "description": "ISO 8601 date-time. Optional, default current time."
+                },
+                {
+                  "key": "limit",
+                  "value": "100",
+                  "description": "Max points. Optional, default 100, max 524."
+                },
+                {
+                  "key": "source",
+                  "value": "auto",
+                  "description": "Data source: auto, ml, or database. Default auto."
+                }
+              ]
+            },
+            "description": "Get crowd heatmap points.\n\nQuery params:\n- targetTime (Optional): ISO 8601 date-time, default current time\n- limit (Optional): default 100, max 524\n- source (Optional): auto | ml | database, default auto\n\nSuccess (200): data.targetTime, data.source, data.points[]\nError (400): error.code='INVALID_QUERY' (invalid targetTime)\nError (503): error.code='ML_API_UNAVAILABLE' (when source=ml and ML fails)\nError (500): error.code='INTERNAL_ERROR'"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Predictions",
+      "item": [
+        {
+          "name": "Create Prediction",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"lat\": {{lat}},\n  \"lng\": {{lng}},\n  \"targetTime\": \"{{targetTime}}\",\n  \"durationMinutes\": 60\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/predictions",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "predictions"]
+            },
+            "description": "Get crowd prediction for a coordinate.\n\nRequired body: lat (number), lng (number), targetTime (date-time string)\nOptional: durationMinutes (default 60, range 15-240)\n\nManhattan bounds: lat 40.679-40.882, lng -74.020 to -73.907\n\nSuccess (200): data.prediction\nError (400): error.code='INVALID_QUERY'\nError (422): error.code='LOCATION_OUT_OF_COVERAGE' or 'INVALID_QUERY' (durationMinutes)\nError (503): error.code='PREDICTION_UNAVAILABLE'\nError (500): error.code='INTERNAL_ERROR'"
+          },
+          "response": []
+        },
+        {
+          "name": "Batch Predictions",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"locations\": [\n    { \"lat\": {{lat}}, \"lng\": {{lng}}, \"locationId\": \"times-square\" },\n    { \"lat\": 40.781, \"lng\": -73.966, \"locationId\": \"central-park\" }\n  ],\n  \"targetTime\": \"{{targetTime}}\",\n  \"durationMinutes\": 60\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/predictions/batch",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "predictions", "batch"]
+            },
+            "description": "Get predictions for multiple coordinates.\n\nRequired body: locations (array, 1-100 items with lat/lng, optional locationId), targetTime\nOptional: durationMinutes (default 60, range 15-240)\n\nSuccess (200): data.targetTime, data.durationMinutes, data.predictions[], data.warnings[]\nPer-location failures appear in warnings with codes: INVALID_COORDINATES, LOCATION_OUT_OF_COVERAGE, PREDICTION_UNAVAILABLE, INTERNAL_ERROR\nError (400): error.code='INVALID_QUERY'\nError (422): error.code='INVALID_QUERY' (durationMinutes)"
+          },
+          "response": []
+        },
+        {
+          "name": "Get Forecast",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/predictions/forecast?lat={{lat}}&lng={{lng}}&startTime={{startTime}}&endTime={{endTime}}&limit=24",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "predictions", "forecast"],
+              "query": [
+                {
+                  "key": "lat",
+                  "value": "{{lat}}",
+                  "description": "Latitude. Required."
+                },
+                {
+                  "key": "lng",
+                  "value": "{{lng}}",
+                  "description": "Longitude. Required."
+                },
+                {
+                  "key": "startTime",
+                  "value": "{{startTime}}",
+                  "description": "Forecast start (ISO 8601). Required."
+                },
+                {
+                  "key": "endTime",
+                  "value": "{{endTime}}",
+                  "description": "Forecast end (ISO 8601). Required."
+                },
+                {
+                  "key": "limit",
+                  "value": "24",
+                  "description": "Max forecast points. Optional, default 24, max 100."
+                }
+              ]
+            },
+            "description": "Get crowd forecast for one coordinate over a time range.\n\nRequired query: lat, lng, startTime, endTime\nOptional: limit (default 24, max 100)\n\nSuccess (200): data.h3Cell, data.coordinates, data.startTime, data.endTime, data.forecast[]\nError (400): error.code='INVALID_QUERY'\nError (503): error.code='PREDICTION_UNAVAILABLE'\nError (500): error.code='INTERNAL_ERROR'"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Admin",
+      "item": [
+        {
+          "name": "Prediction Stats",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/admin/stats/predictions?startDate={{startDate}}&endDate={{endDate}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "admin", "stats", "predictions"],
+              "query": [
+                {
+                  "key": "startDate",
+                  "value": "{{startDate}}",
+                  "description": "Filter created_at >= (ISO date string). Optional."
+                },
+                {
+                  "key": "endDate",
+                  "value": "{{endDate}}",
+                  "description": "Filter created_at <= (ISO date string). Optional."
+                }
+              ]
+            },
+            "description": "Get prediction request statistics with date range filter.\n\nQuery params:\n- startDate (Optional): filter created_at >= (ISO date string)\n- endDate (Optional): filter created_at <= (ISO date string)\n\nNo authentication required in code.\n\nSuccess (200): data.totalPredictionRequests, data.averageCrowdScore, data.mlRequests, data.cachedRequests, data.cacheHitRate, data.uniqueH3Cells, data.mostRequestedH3Cells[]\nError (400): error.code='INVALID_QUERY' (invalid date)\nError (500): error.code='INTERNAL_ERROR'"
+          },
+          "response": []
+        },
+        {
+          "name": "Prediction Stats (All Time)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/admin/stats/predictions",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "admin", "stats", "predictions"],
+              "query": [
+                {
+                  "key": "startDate",
+                  "value": "{{startDate}}",
+                  "description": "Filter created_at >= (ISO date string). Optional.",
+                  "disabled": true
+                },
+                {
+                  "key": "endDate",
+                  "value": "{{endDate}}",
+                  "description": "Filter created_at <= (ISO date string). Optional.",
+                  "disabled": true
+                }
+              ]
+            },
+            "description": "Get prediction request statistics without date filter.\n\nQuery params startDate and endDate are disabled — returns all-time stats.\n\nSuccess (200): data.totalPredictionRequests, data.averageCrowdScore, data.mlRequests, data.cachedRequests, data.cacheHitRate, data.uniqueH3Cells, data.mostRequestedH3Cells[]\nError (500): error.code='INTERNAL_ERROR'"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Recommendations",
+      "item": [
+        {
+          "name": "Get Recommendations",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"lat\": {{lat}},\n  \"lng\": {{lng}},\n  \"targetTime\": \"{{targetTime}}\",\n  \"limit\": 5\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/recommendations",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "recommendations"]
+            },
+            "description": "Get quieter nearby place recommendations.\n\nRequired body: lat, lng, targetTime\nOptional: limit (default 5, max 20)\n\nSuccess (200): data.targetTime, data.recommendations[] with type, h3Cell, coordinates, busynessScore, busynessLevel, pedestriansPredicted, period, reason\nError (400): error.code='INVALID_QUERY'\nError (500): error.code='INTERNAL_ERROR'"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Feedback",
+      "item": [
+        {
+          "name": "Submit Feedback",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"rating\": 4,\n  \"userId\": \"user-001\",\n  \"h3Cell\": \"{{h3Cell}}\",\n  \"wasUseful\": true,\n  \"comment\": \"Prediction was accurate\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/feedback",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "feedback"]
+            },
+            "description": "Submit user feedback for a prediction (full body with optional fields).\n\nRequired body: rating (integer 1-5)\nOptional: userId, h3Cell, wasUseful, comment\n\nSuccess (201): data.feedback with id, userId, h3Cell, rating, wasUseful, comment, createdAt\nError (422): error.code='INVALID_RATING'\nError (500): error.code='INTERNAL_ERROR'"
+          },
+          "response": []
+        },
+        {
+          "name": "Submit Feedback (Minimal)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"rating\": 4\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/feedback",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "feedback"]
+            },
+            "description": "Submit user feedback with minimum required fields only.\n\nRequired body: rating (integer 1-5)\n\nSuccess (201): data.feedback\nError (422): error.code='INVALID_RATING'\nError (500): error.code='INTERNAL_ERROR'"
+          },
+          "response": []
+        }
+      ]
+    }
+  ]
+}
