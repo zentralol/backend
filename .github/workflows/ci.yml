@@ -92,8 +92,26 @@ jobs:
 
           printf '::add-mask::%s\n' "${JENKINS_TOKEN}"
 
-          curl --fail --show-error --silent --location --request POST --get \
-            "${JENKINS_URL%/}/job/zentra-backend/buildWithParameters" \
+          JENKINS_BASE_URL="${JENKINS_URL%/}"
+          case "${JENKINS_BASE_URL}" in
+            */build|*/buildWithParameters)
+              JENKINS_BUILD_URL="${JENKINS_BASE_URL}"
+              ;;
+            */job/zentra-backend)
+              JENKINS_BUILD_URL="${JENKINS_BASE_URL}/buildWithParameters"
+              ;;
+            */view/zentra)
+              JENKINS_BUILD_URL="${JENKINS_BASE_URL}/job/zentra-backend/buildWithParameters"
+              ;;
+            *)
+              JENKINS_BUILD_URL="${JENKINS_BASE_URL}/view/zentra/job/zentra-backend/buildWithParameters"
+              ;;
+          esac
+
+          echo "Triggering Jenkins deployment at ${JENKINS_BUILD_URL}"
+
+          curl --fail --show-error --silent --location --get \
+            "${JENKINS_BUILD_URL}" \
             --data-urlencode "token=${JENKINS_TOKEN}" \
             --data-urlencode "IMAGE_NAME=${IMAGE_NAME}" \
             --data-urlencode "IMAGE_TAG=${IMAGE_TAG}" \
