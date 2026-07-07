@@ -1,20 +1,36 @@
-﻿const express = require('express');
-const { getPredictionStats, getTopPredictionCells } = require('../repositories/statsRepository');
+const express = require('express');
+const {
+    getFeedbackByH3Cell,
+    getFeedbackStats,
+    getPredictionStats,
+    getRecentFeedbackComments,
+    getTopPredictionCells
+} = require('../repositories/statsRepository');
 const { isValidDateTime } = require('../utils/validation');
 const { sendSuccess, sendError } = require('../utils/response');
 
 const router = express.Router();
 
+function validateDateRange(startDate, endDate, res) {
+    if (startDate && !isValidDateTime(startDate)) {
+        sendError(res, 400, 'INVALID_QUERY', 'startDate must be a valid date string');
+        return false;
+    }
+
+    if (endDate && !isValidDateTime(endDate)) {
+        sendError(res, 400, 'INVALID_QUERY', 'endDate must be a valid date string');
+        return false;
+    }
+
+    return true;
+}
+
 router.get('/stats/predictions', async (req, res) => {
     const startDate = (req.query.startDate || '').trim();
     const endDate = (req.query.endDate || '').trim();
 
-    if (startDate && !isValidDateTime(startDate)) {
-        return sendError(res, 400, 'INVALID_QUERY', 'startDate must be a valid date string');
-    }
-
-    if (endDate && !isValidDateTime(endDate)) {
-        return sendError(res, 400, 'INVALID_QUERY', 'endDate must be a valid date string');
+    if (!validateDateRange(startDate, endDate, res)) {
+        return null;
     }
 
     try {
@@ -43,6 +59,48 @@ router.get('/stats/predictions', async (req, res) => {
     } catch (err) {
         console.error('Prediction Stats Failed:', err.message);
         return sendError(res, 500, 'INTERNAL_ERROR', 'Prediction statistics query failed');
+    }
+});
+
+router.get('/stats/feedback', async (req, res) => {
+    const startDate = (req.query.startDate || '').trim();
+    const endDate = (req.query.endDate || '').trim();
+
+    if (!validateDateRange(startDate, endDate, res)) {
+        return null;
+    }
+
+    try {
+        const statsResult = await getFeedbackStats(startDate, endDate);
+        const byH3CellResult = await getFeedbackByH3Cell(startDate, endDate);
+        const commentsResult = await getRecentFeedbackComments(startDate, endDate);
+        const stats = statsResult.rows[0];
+
+        return sendSuccess(res, 200, {
+            totalFeedback: Number(stats.total_feedback) || 0,
+            averageRating: stats.average_rating === null ? null : Number(stats.average_rating),
+            usefulRate: stats.useful_rate === null ? null : Number(stats.useful_rate),
+            feedbackByH3Cell: byH3CellResult.rows.map((row) => ({
+                h3Cell: row.h3_cell,
+                count: row.feedback_count,
+                averageRating: row.average_rating === null ? null : Number(row.average_rating),
+                usefulRate: row.useful_rate === null ? null : Number(row.useful_rate)
+            })),
+            recentComments: commentsResult.rows.map((row) => ({
+                id: String(row.id),
+                h3Cell: row.h3_cell,
+                rating: row.rating,
+                wasUseful: row.was_useful,
+                comment: row.comment,
+                createdAt: row.created_at
+            }))
+        }, {
+            startDate: startDate || null,
+            endDate: endDate || null
+        });
+    } catch (err) {
+        console.error('Feedback Stats Failed:', err.message);
+        return sendError(res, 500, 'INTERNAL_ERROR', 'Feedback statistics query failed');
     }
 });
 

@@ -1,4 +1,4 @@
-﻿const express = require('express');
+const express = require('express');
 const {
     getNearestPredictionScore,
     getNearestH3Cell,
@@ -30,6 +30,58 @@ function validatePredictionInput(lat, lng, targetTime, durationMinutes) {
     }
 
     return null;
+}
+
+function buildExplanation(score, period) {
+    const level = busynessLevel(score);
+    const periodText = period ? ` during the ${period} period` : '';
+    const details = {
+        very_quiet: {
+            summary: `This area is expected to be very quiet${periodText}.`,
+            reasons: [
+                'The predicted crowd score is very low for the selected time.',
+                'This time window is likely to have lighter foot traffic than busier periods.'
+            ],
+            suggestedAction: 'This is a good time to visit if you prefer a quieter area.'
+        },
+        quiet: {
+            summary: `This area is expected to be quiet${periodText}.`,
+            reasons: [
+                'The predicted crowd score is below a typical moderate level.',
+                'Nearby movement patterns suggest relatively light activity.'
+            ],
+            suggestedAction: 'This time is suitable if you want to avoid busy crowds.'
+        },
+        moderate: {
+            summary: `This area is expected to be moderately busy${periodText}.`,
+            reasons: [
+                'The predicted crowd score is in the middle range.',
+                'Some foot traffic is expected, but it is not at the busiest level.'
+            ],
+            suggestedAction: 'This should be manageable, but consider checking quieter alternatives if needed.'
+        },
+        busy: {
+            summary: `This area is expected to be busy${periodText}.`,
+            reasons: [
+                'The predicted crowd score is above the moderate range.',
+                'Travel, visitor activity, or nearby points of interest may increase foot traffic.'
+            ],
+            suggestedAction: 'Consider a quieter nearby area or a different time.'
+        },
+        very_busy: {
+            summary: `This area is expected to be very busy${periodText}.`,
+            reasons: [
+                'The predicted crowd score is in the highest range.',
+                'Nearby transit, visitor activity, or POI density may increase foot traffic.'
+            ],
+            suggestedAction: 'Consider changing the time or choosing a quieter nearby area.'
+        }
+    };
+
+    return {
+        ...details[level],
+        disclaimer: 'This is a model prediction, not a live crowd count.'
+    };
 }
 
 async function buildPrediction(lat, lng, targetTime, durationMinutes, clientId = null) {
@@ -240,6 +292,33 @@ router.get('/forecast', async (req, res) => {
         console.error('Forecast Query Failed:', err.message);
         return sendError(res, 500, 'INTERNAL_ERROR', 'Forecast query failed');
     }
+});
+
+router.post('/explanation', async (req, res) => {
+    const { lat, lng, targetTime, busynessScore, period = null } = req.body || {};
+    const parsedLat = Number(lat);
+    const parsedLng = Number(lng);
+    const score = Number(busynessScore);
+
+    if (!Number.isFinite(parsedLat) || !Number.isFinite(parsedLng) || !targetTime || !Number.isFinite(score)) {
+        return sendError(res, 400, 'INVALID_QUERY', 'lat, lng, targetTime, and busynessScore are required');
+    }
+
+    if (!isValidDateTime(targetTime)) {
+        return sendError(res, 400, 'INVALID_QUERY', 'targetTime must be a valid date-time string');
+    }
+
+    if (score < 0 || score > 100) {
+        return sendError(res, 422, 'INVALID_QUERY', 'busynessScore must be between 0 and 100');
+    }
+
+    if (!isInManhattanCoverage(parsedLat, parsedLng)) {
+        return sendError(res, 422, 'LOCATION_OUT_OF_COVERAGE', 'Prediction is currently available for Manhattan only');
+    }
+
+    return sendSuccess(res, 200, {
+        explanation: buildExplanation(score, period)
+    });
 });
 
 module.exports = router;

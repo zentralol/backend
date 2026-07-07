@@ -1,4 +1,4 @@
-﻿const SELECT_PREDICTION_STATS = `
+const SELECT_PREDICTION_STATS = `
     WITH filtered_requests AS (
         SELECT *
         FROM prediction_requests
@@ -30,7 +30,25 @@ const SELECT_TOP_PREDICTION_CELLS = `
     LIMIT 10
 `;
 
+const SELECT_FEEDBACK_STATS = `
+    SELECT *
+    FROM public.zentra_get_feedback_stats($1::text, $2::text)
+`;
+
+const SELECT_FEEDBACK_BY_H3_CELL = `
+    SELECT *
+    FROM public.zentra_get_feedback_by_h3_cell($1::text, $2::text)
+`;
+
+const SELECT_RECENT_FEEDBACK_COMMENTS = `
+    SELECT *
+    FROM public.zentra_get_recent_feedback_comments($1::text, $2::text)
+`;
+
 module.exports = {
     SELECT_PREDICTION_STATS,
-    SELECT_TOP_PREDICTION_CELLS
+    SELECT_TOP_PREDICTION_CELLS,
+    SELECT_FEEDBACK_STATS,
+    SELECT_FEEDBACK_BY_H3_CELL,
+    SELECT_RECENT_FEEDBACK_COMMENTS
 };

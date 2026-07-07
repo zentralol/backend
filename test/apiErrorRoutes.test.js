@@ -1,4 +1,4 @@
-﻿const test = require('node:test');
+const test = require('node:test');
 const assert = require('node:assert/strict');
 
 const pool = require('../src/config/database');
@@ -66,16 +66,27 @@ function createMockDb(mode = {}) {
         if (text.includes('zentra_get_forecast_scores')) {
             if (mode.throwForecast) throw new Error('forecast db failed');
             return {
-                rowCount: 1,
-                rows: [{
-                    h3_cell: '892a100d67bffff',
-                    lat: 40.7581,
-                    lon: -73.9854,
-                    period: 'PM',
-                    query_timestamp: '2026-07-01T16:30:00-04:00',
-                    crowd_score: 0.82,
-                    pedestrians_pred: 3067.3
-                }]
+                rowCount: 2,
+                rows: [
+                    {
+                        h3_cell: '892a100d67bffff',
+                        lat: 40.7581,
+                        lon: -73.9854,
+                        period: 'PM',
+                        query_timestamp: '2026-07-01T16:30:00-04:00',
+                        crowd_score: 0.82,
+                        pedestrians_pred: 3067.3
+                    },
+                    {
+                        h3_cell: '892a100d67bffff',
+                        lat: 40.7581,
+                        lon: -73.9854,
+                        period: 'AM',
+                        query_timestamp: '2026-07-01T10:00:00-04:00',
+                        crowd_score: 0.35,
+                        pedestrians_pred: 900.1
+                    }
+                ]
             };
         }
 
@@ -115,6 +126,26 @@ function createMockDb(mode = {}) {
                     created_at: '2026-07-01T12:00:00Z'
                 }]
             };
+        }
+
+        if (text.includes('zentra_get_feedback_stats')) {
+            if (mode.throwFeedbackStats) throw new Error('feedback stats db failed');
+            return {
+                rowCount: 1,
+                rows: [{
+                    total_feedback: 0,
+                    average_rating: null,
+                    useful_rate: null
+                }]
+            };
+        }
+
+        if (text.includes('zentra_get_feedback_by_h3_cell')) {
+            return { rowCount: 0, rows: [] };
+        }
+
+        if (text.includes('zentra_get_recent_feedback_comments')) {
+            return { rowCount: 0, rows: [] };
         }
 
         if (text.includes('COUNT(*)::int AS total_requests')) {
@@ -362,3 +393,135 @@ test('GET /admin/stats/predictions handles zero stats, invalid endDate, and fail
         assert.equal(failing.status, 500);
     });
 });
+
+test('POST /predictions/explanation validates request fields', async () => {
+    await withTestServer({}, async (baseUrl) => {
+        const missing = await requestJson(baseUrl, '/api/v1/predictions/explanation', { method: 'POST', body: JSON.stringify({}) });
+        const badScore = await requestJson(baseUrl, '/api/v1/predictions/explanation', {
+            method: 'POST',
+            body: JSON.stringify({ lat: 40.758, lng: -73.9855, targetTime: '2026-07-01T16:30:00-04:00', busynessScore: 200 })
+        });
+        const outside = await requestJson(baseUrl, '/api/v1/predictions/explanation', {
+            method: 'POST',
+            body: JSON.stringify({ lat: 41.2, lng: -73.9855, targetTime: '2026-07-01T16:30:00-04:00', busynessScore: 40 })
+        });
+
+        assert.equal(missing.status, 400);
+        assert.equal(badScore.status, 422);
+        assert.equal(outside.status, 422);
+    });
+});
+
+test('POST /recommendations/quiet-times validates input and unavailable data', async () => {
+    await withTestServer({}, async (baseUrl) => {
+        const missing = await requestJson(baseUrl, '/api/v1/recommendations/quiet-times', { method: 'POST', body: JSON.stringify({}) });
+        const badDate = await requestJson(baseUrl, '/api/v1/recommendations/quiet-times', {
+            method: 'POST',
+            body: JSON.stringify({ lat: 40.758, lng: -73.9855, targetTime: 'bad', startTime: '2026-07-01T09:00:00-04:00', endTime: '2026-07-01T21:00:00-04:00' })
+        });
+        const outside = await requestJson(baseUrl, '/api/v1/recommendations/quiet-times', {
+            method: 'POST',
+            body: JSON.stringify({ lat: 41.2, lng: -73.9855, targetTime: '2026-07-01T16:30:00-04:00', startTime: '2026-07-01T09:00:00-04:00', endTime: '2026-07-01T21:00:00-04:00' })
+        });
+
+        assert.equal(missing.status, 400);
+        assert.equal(badDate.status, 400);
+        assert.equal(outside.status, 422);
+    });
+
+    await withTestServer({ emptyNearestCell: true }, async (baseUrl) => {
+        const unavailable = await requestJson(baseUrl, '/api/v1/recommendations/quiet-times', {
+            method: 'POST',
+            body: JSON.stringify({ lat: 40.758, lng: -73.9855, targetTime: '2026-07-01T16:30:00-04:00', startTime: '2026-07-01T09:00:00-04:00', endTime: '2026-07-01T21:00:00-04:00' })
+        });
+
+        assert.equal(unavailable.status, 503);
+    });
+
+    await withTestServer({ emptyPrediction: true }, async (baseUrl) => {
+        const unavailable = await requestJson(baseUrl, '/api/v1/recommendations/quiet-times', {
+            method: 'POST',
+            body: JSON.stringify({ lat: 40.758, lng: -73.9855, targetTime: '2026-07-01T16:30:00-04:00', startTime: '2026-07-01T09:00:00-04:00', endTime: '2026-07-01T21:00:00-04:00' })
+        });
+
+        assert.equal(unavailable.status, 503);
+    });
+});
+
+test('POST /recommendations/quiet-times handles database failures', async () => {
+    await withTestServer({ throwForecast: true }, async (baseUrl) => {
+        const response = await requestJson(baseUrl, '/api/v1/recommendations/quiet-times', {
+            method: 'POST',
+            body: JSON.stringify({ lat: 40.758, lng: -73.9855, targetTime: '2026-07-01T16:30:00-04:00', startTime: '2026-07-01T09:00:00-04:00', endTime: '2026-07-01T21:00:00-04:00' })
+        });
+
+        assert.equal(response.status, 500);
+    });
+});
+
+test('POST /recommendations/places validates top-level request', async () => {
+    await withTestServer({}, async (baseUrl) => {
+        const missing = await requestJson(baseUrl, '/api/v1/recommendations/places', { method: 'POST', body: JSON.stringify({}) });
+        const badDate = await requestJson(baseUrl, '/api/v1/recommendations/places', {
+            method: 'POST',
+            body: JSON.stringify({ currentLocation: { lat: 40.758, lng: -73.9855 }, targetTime: 'bad', candidatePlaces: [{ coordinates: { lat: 40.758, lng: -73.9855 } }] })
+        });
+        const badOrigin = await requestJson(baseUrl, '/api/v1/recommendations/places', {
+            method: 'POST',
+            body: JSON.stringify({ currentLocation: { lat: 'x', lng: -73.9855 }, targetTime: '2026-07-01T16:30:00-04:00', candidatePlaces: [{ coordinates: { lat: 40.758, lng: -73.9855 } }] })
+        });
+
+        assert.equal(missing.status, 400);
+        assert.equal(badDate.status, 400);
+        assert.equal(badOrigin.status, 422);
+    });
+});
+
+test('POST /recommendations/places returns warnings for bad or unavailable candidates', async () => {
+    await withTestServer({ emptyPrediction: true }, async (baseUrl) => {
+        const response = await requestJson(baseUrl, '/api/v1/recommendations/places', {
+            method: 'POST',
+            body: JSON.stringify({
+                currentLocation: { lat: 40.758, lng: -73.9855 },
+                targetTime: '2026-07-01T16:30:00-04:00',
+                candidatePlaces: [
+                    { placeId: 'bad', coordinates: { lat: 'x', lng: -73.9855 } },
+                    { placeId: 'empty', coordinates: { lat: 40.758, lng: -73.9855 } }
+                ]
+            })
+        });
+
+        assert.equal(response.status, 200);
+        assert.equal(response.body.data.recommendations.length, 0);
+        assert.deepEqual(response.body.data.warnings.map((warning) => warning.code), ['INVALID_COORDINATES', 'PREDICTION_UNAVAILABLE']);
+    });
+});
+
+test('POST /recommendations/places records internal warnings when candidate query fails', async () => {
+    await withTestServer({ throwPrediction: true }, async (baseUrl) => {
+        const response = await requestJson(baseUrl, '/api/v1/recommendations/places', {
+            method: 'POST',
+            body: JSON.stringify({
+                currentLocation: { lat: 40.758, lng: -73.9855 },
+                targetTime: '2026-07-01T16:30:00-04:00',
+                candidatePlaces: [{ placeId: 'throws', coordinates: { lat: 40.758, lng: -73.9855 } }]
+            })
+        });
+
+        assert.equal(response.status, 200);
+        assert.equal(response.body.data.warnings[0].code, 'INTERNAL_ERROR');
+    });
+});
+
+test('GET /admin/stats/feedback validates dates and handles database failures', async () => {
+    await withTestServer({}, async (baseUrl) => {
+        const invalid = await requestJson(baseUrl, '/api/v1/admin/stats/feedback?startDate=bad-date');
+        assert.equal(invalid.status, 400);
+    });
+
+    await withTestServer({ throwFeedbackStats: true }, async (baseUrl) => {
+        const failing = await requestJson(baseUrl, '/api/v1/admin/stats/feedback');
+        assert.equal(failing.status, 500);
+    });
+});
+

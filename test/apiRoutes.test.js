@@ -1,4 +1,4 @@
-﻿const test = require('node:test');
+const test = require('node:test');
 const assert = require('node:assert/strict');
 
 const pool = require('../src/config/database');
@@ -36,10 +36,10 @@ function createMockDb() {
                 rows: [{
                     id: 123,
                     h3_cell: '892a100d67bffff',
-                    lat: 40.7581,
-                    lon: -73.9854,
+                    lat: Number(params[0]) || 40.7581,
+                    lon: Number(params[1]) || -73.9854,
                     period: 'PM',
-                    query_timestamp: '2026-07-01T16:30:00-04:00',
+                    query_timestamp: params[2] || '2026-07-01T16:30:00-04:00',
                     crowd_score: 0.82,
                     pedestrians_pred: 3067.3,
                     ensemble_log_pred: 8.1,
@@ -62,16 +62,36 @@ function createMockDb() {
 
         if (text.includes('zentra_get_forecast_scores')) {
             return {
-                rowCount: 1,
-                rows: [{
-                    h3_cell: '892a100d67bffff',
-                    lat: 40.7581,
-                    lon: -73.9854,
-                    period: 'PM',
-                    query_timestamp: '2026-07-01T16:30:00-04:00',
-                    crowd_score: 0.82,
-                    pedestrians_pred: 3067.3
-                }]
+                rowCount: 3,
+                rows: [
+                    {
+                        h3_cell: '892a100d67bffff',
+                        lat: 40.7581,
+                        lon: -73.9854,
+                        period: 'PM',
+                        query_timestamp: '2026-07-01T16:30:00-04:00',
+                        crowd_score: 0.82,
+                        pedestrians_pred: 3067.3
+                    },
+                    {
+                        h3_cell: '892a100d67bffff',
+                        lat: 40.7581,
+                        lon: -73.9854,
+                        period: 'AM',
+                        query_timestamp: '2026-07-01T10:00:00-04:00',
+                        crowd_score: 0.42,
+                        pedestrians_pred: 1200.2
+                    },
+                    {
+                        h3_cell: '892a100d67bffff',
+                        lat: 40.7581,
+                        lon: -73.9854,
+                        period: 'AM',
+                        query_timestamp: '2026-07-01T09:00:00-04:00',
+                        crowd_score: 0.25,
+                        pedestrians_pred: 850.7
+                    }
+                ]
             };
         }
 
@@ -130,6 +150,43 @@ function createMockDb() {
                     matched_h3_cell: '892a100d67bffff',
                     request_count: 3,
                     average_crowd_score: 75.2
+                }]
+            };
+        }
+
+        if (text.includes('zentra_get_feedback_stats')) {
+            return {
+                rowCount: 1,
+                rows: [{
+                    total_feedback: 2,
+                    average_rating: 4.5,
+                    useful_rate: 0.5
+                }]
+            };
+        }
+
+        if (text.includes('zentra_get_feedback_by_h3_cell')) {
+            return {
+                rowCount: 1,
+                rows: [{
+                    h3_cell: '892a100d67bffff',
+                    feedback_count: 2,
+                    average_rating: 4.5,
+                    useful_rate: 0.5
+                }]
+            };
+        }
+
+        if (text.includes('zentra_get_recent_feedback_comments')) {
+            return {
+                rowCount: 1,
+                rows: [{
+                    id: 12,
+                    h3_cell: '892a100d67bffff',
+                    rating: 5,
+                    was_useful: true,
+                    comment: 'Useful prediction',
+                    created_at: '2026-07-01T12:00:00Z'
                 }]
             };
         }
@@ -270,6 +327,25 @@ test('GET /predictions/forecast returns forecast rows', async () => {
     });
 });
 
+test('POST /predictions/explanation returns structured explanation text', async () => {
+    await withTestServer(async (baseUrl) => {
+        const response = await requestJson(baseUrl, '/api/v1/predictions/explanation', {
+            method: 'POST',
+            body: JSON.stringify({
+                lat: 40.758,
+                lng: -73.9855,
+                targetTime: '2026-07-01T16:30:00-04:00',
+                busynessScore: 82,
+                period: 'PM'
+            })
+        });
+
+        assert.equal(response.status, 200);
+        assert.match(response.body.data.explanation.summary, /very busy/);
+        assert.equal(response.body.data.explanation.reasons.length, 2);
+    });
+});
+
 test('POST /recommendations returns quieter nearby areas', async () => {
     await withTestServer(async (baseUrl) => {
         const response = await requestJson(baseUrl, '/api/v1/recommendations', {
@@ -285,6 +361,54 @@ test('POST /recommendations returns quieter nearby areas', async () => {
         assert.equal(response.status, 200);
         assert.equal(response.body.data.recommendations[0].busynessScore, 38);
         assert.equal(response.body.data.recommendations[0].busynessLevel, 'quiet');
+    });
+});
+
+test('POST /recommendations/quiet-times returns lower crowd time options', async () => {
+    await withTestServer(async (baseUrl) => {
+        const response = await requestJson(baseUrl, '/api/v1/recommendations/quiet-times', {
+            method: 'POST',
+            body: JSON.stringify({
+                lat: 40.758,
+                lng: -73.9855,
+                targetTime: '2026-07-01T16:30:00-04:00',
+                startTime: '2026-07-01T09:00:00-04:00',
+                endTime: '2026-07-01T21:00:00-04:00',
+                limit: 2
+            })
+        });
+
+        assert.equal(response.status, 200);
+        assert.equal(response.body.data.original.busynessScore, 82);
+        assert.equal(response.body.data.quietTimes[0].busynessScore, 25);
+        assert.equal(response.body.data.quietTimes.length, 2);
+    });
+});
+
+test('POST /recommendations/places ranks frontend candidate places', async () => {
+    await withTestServer(async (baseUrl) => {
+        const response = await requestJson(baseUrl, '/api/v1/recommendations/places', {
+            method: 'POST',
+            body: JSON.stringify({
+                currentLocation: { lat: 40.758, lng: -73.9855 },
+                targetTime: '2026-07-01T16:30:00-04:00',
+                candidatePlaces: [
+                    {
+                        placeId: 'poi_1',
+                        name: 'Central Park',
+                        category: 'park',
+                        coordinates: { lat: 40.7812, lng: -73.9665 },
+                        source: 'frontend_place_provider'
+                    }
+                ],
+                limit: 5
+            })
+        });
+
+        assert.equal(response.status, 200);
+        assert.equal(response.body.data.recommendations[0].type, 'candidate_place');
+        assert.equal(response.body.data.recommendations[0].rank, 1);
+        assert.equal(response.body.data.recommendations[0].prediction.busynessScore, 82);
     });
 });
 
@@ -338,3 +462,15 @@ test('GET /admin/stats/predictions rejects invalid dates', async () => {
         assert.equal(response.body.error.code, 'INVALID_QUERY');
     });
 });
+
+test('GET /admin/stats/feedback returns feedback analytics', async () => {
+    await withTestServer(async (baseUrl) => {
+        const response = await requestJson(baseUrl, '/api/v1/admin/stats/feedback');
+
+        assert.equal(response.status, 200);
+        assert.equal(response.body.data.totalFeedback, 2);
+        assert.equal(response.body.data.feedbackByH3Cell[0].count, 2);
+        assert.equal(response.body.data.recentComments[0].comment, 'Useful prediction');
+    });
+});
+

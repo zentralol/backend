@@ -1,4 +1,4 @@
-﻿# Zentra Backend API Contract v1.0
+# Zentra Backend API Contract v1.0
 
 Project: COMP47360 Team 10 - Zentra  
 Backend scope: Express.js API gateway, Supabase PostgreSQL data access, FastAPI ML integration, H3 grid prediction service, recommendation support, feedback logging, and admin statistics  
@@ -124,9 +124,9 @@ type BusynessLevel =
 | 4 | GET | `/predictions/forecast` | `IMPLEMENTED` | Crowd forecast for one coordinate |
 | 5 | GET | `/map/heatmap` | `IMPLEMENTED` | H3 heatmap points for map display |
 | 6 | POST | `/recommendations` | `IMPLEMENTED` | Quieter nearby H3 area recommendations |
-| 7 | POST | `/predictions/explanation` | `PLANNED_MVP` | Backend-generated explanation for one prediction |
-| 8 | POST | `/recommendations/quiet-times` | `PLANNED_MVP` | Quieter time recommendations for one coordinate |
-| 9 | POST | `/recommendations/places` | `PLANNED_AFTER_POI_SOURCE` | Rank candidate places using POI and crowd prediction data |
+| 7 | POST | `/predictions/explanation` | `IMPLEMENTED` | Backend-generated explanation for one prediction |
+| 8 | POST | `/recommendations/quiet-times` | `IMPLEMENTED` | Quieter time recommendations for one coordinate |
+| 9 | POST | `/recommendations/places` | `IMPLEMENTED` | Rank frontend-provided candidate places using crowd prediction data |
 | 10 | GET | `/poi/search` | `PLANNED_AFTER_POI_SOURCE` | Search POIs from the selected backend POI source/catalog |
 | 11 | GET | `/poi/{poiId}` | `PLANNED_AFTER_POI_SOURCE` | Get normalized POI details |
 | 12 | GET | `/poi/nearby` | `PLANNED_AFTER_POI_SOURCE` | Find nearby POIs around coordinates |
@@ -136,7 +136,7 @@ type BusynessLevel =
 | 16 | GET | `/alerts/crowd` | `PLANNED_AFTER_MVP` | Return crowd/event alerts for an area and time window |
 | 17 | POST | `/feedback` | `IMPLEMENTED` | Store user feedback about prediction usefulness |
 | 18 | GET | `/admin/stats/predictions` | `IMPLEMENTED` | Prediction request statistics |
-| 19 | GET | `/admin/stats/feedback` | `PLANNED_MVP` | Feedback analytics |
+| 19 | GET | `/admin/stats/feedback` | `IMPLEMENTED` | Feedback analytics |
 
 ## 6. Implemented Endpoints
 
@@ -528,7 +528,7 @@ Response `200`:
 }
 ```
 
-## 7. Planned Backend Endpoints
+## 7. Additional Backend Endpoints
 
 ### 7.1 Quieter Time Recommendations
 
@@ -580,7 +580,7 @@ Response `200`:
 
 `POST /recommendations/places`
 
-Purpose: rank candidate places that the frontend has already resolved through its own place search or geocoding provider.
+Purpose: rank candidate places that the frontend has already resolved through its own place search or geocoding provider. This endpoint does not require a backend POI catalog.
 
 Request:
 
@@ -633,7 +633,7 @@ Response `200`:
           "busynessScore": 44,
           "busynessLevel": "moderate",
           "confidence": 0.7,
-          "source": "ml_fastapi"
+          "source": "h3_grid_scores"
         },
         "distanceMeters": 2400,
         "reason": "This place is predicted to be less crowded than the current area."
@@ -1103,6 +1103,8 @@ Supabase is used as database infrastructure only. The backend does not expose Su
 | `ML_API_UNAVAILABLE` | 503 | FastAPI ML service unavailable |
 | `INVALID_RATING` | 422 | Feedback rating must be 1-5 |
 | `INTERNAL_ERROR` | 500 | Unexpected server failure |
+
+
 
 
 

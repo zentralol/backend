@@ -1,4 +1,4 @@
-﻿const test = require('node:test');
+const test = require('node:test');
 const assert = require('node:assert/strict');
 
 const h3Queries = require('../src/repositories/sql/h3Queries');
@@ -28,6 +28,16 @@ test('write queries remain parameterized', () => {
     assert.match(INSERT_PREDICTION_REQUEST, /\$6/);
 });
 
+test('feedback stats queries call Supabase PostgreSQL functions', () => {
+    assert.match(statsQueries.SELECT_FEEDBACK_STATS, /zentra_get_feedback_stats/);
+    assert.match(statsQueries.SELECT_FEEDBACK_BY_H3_CELL, /zentra_get_feedback_by_h3_cell/);
+    assert.match(statsQueries.SELECT_RECENT_FEEDBACK_COMMENTS, /zentra_get_recent_feedback_comments/);
+
+    assert.doesNotMatch(statsQueries.SELECT_FEEDBACK_STATS, /WITH filtered_feedback/i);
+    assert.doesNotMatch(statsQueries.SELECT_FEEDBACK_BY_H3_CELL, /GROUP BY h3_cell/i);
+    assert.doesNotMatch(statsQueries.SELECT_RECENT_FEEDBACK_COMMENTS, /comment IS NOT NULL/i);
+});
+
 test('admin stats queries stay read-only', () => {
     const combined = Object.values(statsQueries).join('\n').toUpperCase();
 
@@ -36,3 +46,4 @@ test('admin stats queries stay read-only', () => {
     assert.doesNotMatch(combined, /UPDATE\s+/);
     assert.doesNotMatch(combined, /DELETE\s+FROM/);
 });
+
