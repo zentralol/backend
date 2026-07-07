@@ -1,26 +1,27 @@
-# Zentra Backend
+﻿# Zentra Backend
 
-Express.js API server for Zentra. Connects to a PostgreSQL database (Supabase) and exposes location search endpoints.
+Express.js API server for Zentra. The backend exposes the public API used by the web and mobile clients, calls the FastAPI ML service when available, and uses Supabase as a hosted PostgreSQL database.
+
+## What Supabase Is Used For
+
+This backend uses **Supabase PostgreSQL** only.
+
+Current usage:
+
+- `h3_grid_scores`: read H3 crowd prediction data for fallback predictions, forecasts, heatmaps, and recommendations.
+- `h3_grid_cells`: read H3 cell centroids for ML-backed heatmap generation.
+- `prediction_requests`: write prediction request logs and read admin prediction statistics.
+- `feedback`: write user feedback and support future feedback analytics.
+- PostgreSQL functions in `supabase/migrations`: keep complex H3 query logic inside the database instead of writing large SQL blocks in route handlers.
+
+The backend does **not** expose Supabase keys to frontend or mobile clients. Clients call the Express API only.
 
 ## Prerequisites
 
 - [Node.js](https://nodejs.org/) 18+ (LTS recommended)
 - [Git](https://git-scm.com/)
-- Access to the Zentra Supabase project (database password and project URL)
-
-## Clone the repository
-
-```bash
-git clone git@github.com:zentralol/backend.git
-cd backend
-```
-
-If you use HTTPS:
-
-```bash
-git clone https://github.com/zentralol/backend.git
-cd backend
-```
+- Access to the Zentra Supabase project database
+- Optional: access to the FastAPI ML service
 
 ## Install dependencies
 
@@ -30,32 +31,42 @@ npm install
 
 ## Environment variables
 
-The app reads configuration from a `.env` file at startup (via `dotenv`). This file is **not** committed to git.
+The app reads configuration from a `.env` file at startup through `dotenv`. This file is not committed to git.
 
-1. Copy the example file:
-
-   ```bash
-   cp .env.example .env
-   ```
-
-2. Edit `.env` and set your values:
-
-   | Variable | Required | Description |
-   |----------|----------|-------------|
-   | `PORT` | No | HTTP port (default: `3000`) |
-   | `DATABASE_URL` | **Yes** | PostgreSQL connection string for `pg` |
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `PORT` | No | HTTP port. Defaults to `3000`. |
+| `DATABASE_URL` | Yes | Supabase PostgreSQL connection string for `pg`. |
+| `ML_API_BASE_URL` | No | FastAPI ML service base URL, for example `http://localhost:8000`. |
+| `ML_API_TIMEOUT_MS` | No | Timeout for ML requests. Defaults to `5000`. |
 
 ### Supabase `DATABASE_URL`
 
-In Supabase Dashboard → **Project Settings → Database → Connection string**, choose **URI** and copy the direct connection (port `5432`).
-
-Format:
+In Supabase Dashboard -> Project Settings -> Database -> Connection string, choose URI and copy the direct PostgreSQL connection string.
 
 ```env
 DATABASE_URL=postgresql://postgres:<YOUR-PASSWORD>@db.<project-ref>.supabase.co:5432/postgres
 ```
 
-Replace `<YOUR-PASSWORD>` with your database password. SSL is enabled in `server.js` for cloud databases.
+## Apply Supabase Database Functions
+
+Complex H3 read queries are stored as PostgreSQL functions in:
+
+```text
+supabase/migrations/20260707000000_backend_query_functions.sql
+```
+
+Apply this SQL in Supabase before running endpoints that depend on H3 prediction data. You can paste it into the Supabase SQL Editor, or apply it through the Supabase CLI if the project is linked.
+
+These functions are used by the backend repository layer:
+
+| Function | Backend purpose |
+|----------|-----------------|
+| `zentra_get_heatmap_scores` | Heatmap fallback data |
+| `zentra_get_nearest_prediction_score` | Single and batch prediction fallback |
+| `zentra_get_nearest_h3_cell` | Forecast H3 cell lookup |
+| `zentra_get_forecast_scores` | Coordinate forecast data |
+| `zentra_get_quieter_nearby_scores` | Quieter nearby area recommendations |
 
 ## Run locally
 
@@ -71,102 +82,96 @@ node server.js
 
 You should see:
 
-```
+```text
 Zentra Backend Server running on http://localhost:3000
 ```
 
-### Verify the server
+## Verify the server
 
-Health check (also tests database connectivity):
+Health check:
 
 ```bash
 curl http://localhost:3000/api/v1/health
 ```
 
-Search locations:
+Single prediction:
 
 ```bash
-curl "http://localhost:3000/api/v1/locations/search?q=marina"
+curl -X POST http://localhost:3000/api/v1/predictions \
+  -H "Content-Type: application/json" \
+  -d '{"lat":40.758,"lng":-73.9855,"targetTime":"2026-07-01T16:30:00-04:00","durationMinutes":60}'
 ```
 
-Get one location by OSM ID:
+Heatmap from database fallback:
 
 ```bash
-curl http://localhost:3000/api/v1/locations/<locationId>
+curl "http://localhost:3000/api/v1/map/heatmap?limit=3&source=database"
 ```
 
-## Debug locally
+## Run tests
 
-### Node inspector (Chrome / Cursor)
-
-Start with the inspector enabled:
+Unit tests use Node's built-in `node:test` runner, so no extra test framework is required.
 
 ```bash
-node --inspect server.js
+npm test
 ```
 
-Then attach a debugger:
+On Windows PowerShell, if `npm` is blocked by script execution policy, run:
 
-- **Chrome**: open `chrome://inspect` → **Open dedicated DevTools for Node**
-- **Cursor / VS Code**: Run → **Attach to Node Process**, or add a launch config (see below)
-
-### Cursor / VS Code launch config
-
-Create `.vscode/launch.json`:
-
-```json
-{
-  "version": "0.2.0",
-  "configurations": [
-    {
-      "type": "node",
-      "request": "launch",
-      "name": "Debug Zentra Backend",
-      "program": "${workspaceFolder}/server.js",
-      "envFile": "${workspaceFolder}/.env"
-    }
-  ]
-}
+```powershell
+npm.cmd test
 ```
 
-Set breakpoints in `server.js`, press **F5**, and hit an API route to pause execution.
+Current tests cover shared utility functions, response formatting, SQL query boundaries, app structure, ML client behavior, and API route behavior with a mocked Supabase pool.
 
-### Common issues
+To check the 80% coverage target for lines, functions, and branches, run:
 
-| Symptom | Likely cause |
-|---------|----------------|
-| `Environment variables loaded successfully? false` | Missing `.env` or `DATABASE_URL` not set |
-| `DATABASE_UNAVAILABLE` on `/health` | Wrong password, network, or Supabase project paused |
-| `ECONNREFUSED` on port 3000 | Another process using `PORT`; change `PORT` in `.env` |
-| `Cannot find module` | Run `npm install` |
-
+```powershell
+npm.cmd run test:coverage
+```
 ## API documentation
 
 Full request/response contract: [`docs/api-contract.md`](docs/api-contract.md).
 
-Current endpoints:
+Implemented endpoints:
 
 | Method | Path | Description |
 |--------|------|-------------|
 | `GET` | `/api/v1/health` | Service and database health |
-| `GET` | `/api/v1/locations/search` | Search by name (`q`), optional `type`, `limit` |
-| `GET` | `/api/v1/locations/:locationId` | Single location by OSM ID |
+| `POST` | `/api/v1/predictions` | Single coordinate crowd prediction |
+| `POST` | `/api/v1/predictions/batch` | Batch coordinate crowd predictions |
+| `GET` | `/api/v1/predictions/forecast` | Forecast for one coordinate |
+| `GET` | `/api/v1/map/heatmap` | H3 heatmap points |
+| `POST` | `/api/v1/recommendations` | Quieter nearby H3 area recommendations |
+| `POST` | `/api/v1/feedback` | Store prediction feedback |
+| `GET` | `/api/v1/admin/stats/predictions` | Prediction request statistics |
 
 ## Project structure
 
-```
+```text
 backend/
-├── server.js          # Express app and routes
-├── package.json
-├── .env.example       # Environment variable template
+├── server.js
+├── src/
+│   ├── app.js
+│   ├── config/
+│   ├── repositories/
+│   │   └── sql/
+│   ├── routes/
+│   ├── services/
+│   └── utils/
+├── supabase/
+│   └── migrations/
 ├── docs/
 │   └── api-contract.md
-└── README.md
+└── package.json
 ```
 
 ## Tech stack
 
-- **Runtime**: Node.js
-- **HTTP**: Express 5
-- **Database**: PostgreSQL via `pg` (Supabase-hosted)
-- **Config**: `dotenv`
+- Runtime: Node.js
+- HTTP API: Express 5
+- Database: Supabase-hosted PostgreSQL through `pg`
+- ML integration: FastAPI service through HTTP
+- Config: `dotenv`
+
+

@@ -1,0 +1,5 @@
+﻿const CHECK_DATABASE_CONNECTION = 'SELECT 1';
+
+module.exports = {
+    CHECK_DATABASE_CONNECTION
+};

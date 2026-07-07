@@ -1,84 +1,61 @@
-# Zentra API Contract v1.0 - Full Project Complete Version
+﻿# Zentra Backend API Contract v1.0
 
 Project: COMP47360 Team 10 - Zentra  
-Backend scope: Express.js API gateway, Supabase PostgreSQL, FastAPI ML integration, H3 grid data service, recommendation support  
-Clients: Web frontend, SwiftUI mobile app, optional admin/planning view  
-Last updated: 2026-07-02  
-Contract status: Full project API contract with implementation states
+Backend scope: Express.js API gateway, Supabase PostgreSQL data access, FastAPI ML integration, H3 grid prediction service, recommendation support, feedback logging, and admin statistics  
+Clients: Web frontend and SwiftUI mobile app  
+Last updated: 2026-07-07
 
 ## 1. Purpose
 
-This contract describes the full project API surface, not only the endpoints currently implemented.
-
-It separates endpoints into:
-
-- `IMPLEMENTED`: available in the current Express backend
-- `PLANNED_MVP`: needed for the MVP but not implemented yet
-- `PLANNED_AFTER_POI`: depends on confirmed online POI source or POI catalog
-- `FUTURE`: later full-project extensions
-- `INTERNAL`: backend-only or backend-to-ML boundary
-- `REMOVED`: deliberately removed from backend scope
-
-## 2. Current Product Direction
-
-Zentra is now a coordinate-based crowd prediction system.
-
-Location search is handled by the frontend or an online POI/geocoding API. After the user selects a place, the frontend sends `lat`, `lng`, and `targetTime` to the Express backend.
+This document defines the API surface owned by the Zentra backend.
 
 The backend is responsible for:
 
-- validating coordinates and time;
-- calling FastAPI ML through Express;
-- mapping coordinates to H3 grid predictions;
-- reading fallback H3 data from Supabase;
-- returning predictions, heatmap data, recommendations, feedback responses, and admin statistics;
-- logging prediction requests;
-- later supporting authenticated preferences and POI-aware recommendations.
+- validating prediction, recommendation, feedback, and admin requests;
+- calling the FastAPI ML service when available;
+- reading fallback prediction data from Supabase PostgreSQL;
+- mapping coordinates to H3 grid prediction data;
+- returning crowd predictions, heatmap data, recommendations, feedback responses, and admin statistics;
+- logging prediction requests for later analysis.
 
-## 3. Architecture
+Frontend and mobile clients resolve user-facing app flows and place search/geocoding before calling the backend with coordinates and time values.
+
+## 2. Architecture
 
 ```text
-Frontend / Mobile
-      |
-      v
+Web Frontend / Mobile App
+        |
+        v
 Express Backend API
-      |---------------------> FastAPI ML Service
-      |
-      v
+        |---------------------> FastAPI ML Service
+        |
+        v
 Supabase PostgreSQL
-
-External / future services:
-      - Clerk authentication
-      - Online POI / geocoding API
-      - Routing / itinerary tools
 ```
 
-Express acts as the API gateway. Frontend clients should call Express only.
+Express is the public API gateway. Frontend and mobile clients should call Express, not FastAPI or Supabase directly.
 
-## 4. Base URL
+## 3. Base URL
 
 ```text
 Local API: http://localhost:3000/api/v1
 ```
 
-All requests and responses use JSON.
+All request and response bodies use JSON.
 
 ```http
 Content-Type: application/json
 Accept: application/json
 ```
 
-Optional headers:
+Optional request headers:
 
 ```http
-Authorization: Bearer <clerk_jwt>
 X-Request-Id: req_client_generated_uuid
 Accept-Language: en
 ```
 
-Current backend does not yet verify Clerk JWT tokens. Clerk verification is planned.
-
-## 5. Shared Models
+## 4. Shared Models
 
 ### Coordinates
 
@@ -89,24 +66,7 @@ Current backend does not yet verify Clerk JWT tokens. Clerk verification is plan
 }
 ```
 
-Current supported area: Manhattan.
-
-### Place Input
-
-Used when frontend or online POI provider has already resolved a place.
-
-```json
-{
-  "placeId": "optional_external_place_id",
-  "name": "Central Park",
-  "category": "park",
-  "coordinates": {
-    "lat": 40.7812,
-    "lng": -73.9665
-  },
-  "source": "online_poi_api"
-}
-```
+Current coverage area: Manhattan.
 
 ### Busyness Level
 
@@ -127,49 +87,19 @@ type BusynessLevel =
 | 61-80 | `busy` |
 | 81-100 | `very_busy` |
 
-### User Preferences
-
-User preferences belong to authenticated Clerk users. They are not anonymous session context and should not be passed around as `userContext` in normal prediction requests.
-
-Target design:
-
-```text
-Frontend logs in with Clerk
-Backend verifies Clerk JWT
-Backend reads/writes preferences through /users/me/preferences
-Recommendation and itinerary logic reads stored preferences server-side
-```
-
-Preference shape:
-
-```json
-{
-  "travelPace": "relaxed",
-  "interests": ["parks", "museums", "food"],
-  "budgetRange": "medium",
-  "crowdTolerance": "low",
-  "mobilityNeeds": ["step_free"],
-  "dietaryNeeds": ["vegetarian"],
-  "inclusionNeeds": ["quiet_spaces"],
-  "preferredLanguage": "en"
-}
-```
-
-## 6. Common Response Format
-
-Success:
+### Common Success Response
 
 ```json
 {
   "success": true,
   "data": {},
   "meta": {
-    "generatedAt": "2026-07-02T12:00:00Z"
+    "generatedAt": "2026-07-07T12:00:00Z"
   }
 }
 ```
 
-Error:
+### Common Error Response
 
 ```json
 {
@@ -179,52 +109,40 @@ Error:
     "message": "targetTime must be a valid date-time string"
   },
   "meta": {
-    "generatedAt": "2026-07-02T12:00:00Z"
+    "generatedAt": "2026-07-07T12:00:00Z"
   }
 }
 ```
 
-## 7. Endpoint Summary
+## 5. Endpoint Summary
 
-| # | Method | Path | State | Client | Purpose |
-|---:|---|---|---|---|---|
-| 1 | GET | `/health` | `IMPLEMENTED` | All | Service and database health |
-| 2 | POST | `/predictions` | `IMPLEMENTED` | Web/mobile | Single coordinate crowd prediction |
-| 3 | POST | `/predictions/batch` | `IMPLEMENTED` | Web/mobile/map | Batch coordinate predictions |
-| 4 | GET | `/map/heatmap` | `IMPLEMENTED` | Web map | H3 heatmap points |
-| 5 | POST | `/recommendations` | `IMPLEMENTED` | Web/mobile | Current quieter H3 area recommendations |
-| 6 | GET | `/predictions/forecast` | `IMPLEMENTED` | Web/mobile | Prototype coordinate forecast |
-| 7 | POST | `/feedback` | `IMPLEMENTED` | Web/mobile | Store user feedback |
-| 8 | GET | `/admin/stats/predictions` | `IMPLEMENTED` | Admin | Prediction request statistics |
-| 9 | POST | `/explanations` | `PLANNED_MVP` | Web/mobile | Plain-language prediction explanation |
-| 10 | POST | `/recommendations/quiet-times` | `PLANNED_MVP` | Web/mobile | Suggest quieter times for same coordinate |
-| 11 | GET | `/users/me/preferences` | `PLANNED_MVP` | Web/mobile | Read logged-in user's onboarding preferences |
-| 12 | PUT | `/users/me/preferences` | `PLANNED_MVP` | Web/mobile | Update logged-in user's onboarding preferences |
-| 13 | POST | `/recommendations/places` | `PLANNED_AFTER_POI` | Web/mobile | Rank candidate POIs with crowd prediction |
-| 14 | POST | `/itineraries` | `FUTURE` | Web/mobile | Generate custom crowd-aware itinerary |
-| 15 | POST | `/routes/crowd-aware` | `FUTURE` | Mobile/web map | Route-level crowd-aware guidance |
-| 16 | GET | `/admin/stats/feedback` | `FUTURE` | Admin | Feedback analytics |
-| 17 | POST | `/internal/ml/predict-busyness` | `INTERNAL` | Backend only | Express-to-ML single prediction boundary |
-| 18 | POST | `/internal/ml/predict-busyness-batch` | `INTERNAL` | Backend only | Express-to-ML batch prediction boundary |
+| # | Method | Path | State | Purpose |
+|---:|---|---|---|---|
+| 1 | GET | `/health` | `IMPLEMENTED` | Service and database health |
+| 2 | POST | `/predictions` | `IMPLEMENTED` | Single coordinate crowd prediction |
+| 3 | POST | `/predictions/batch` | `IMPLEMENTED` | Batch coordinate crowd predictions |
+| 4 | GET | `/predictions/forecast` | `IMPLEMENTED` | Crowd forecast for one coordinate |
+| 5 | GET | `/map/heatmap` | `IMPLEMENTED` | H3 heatmap points for map display |
+| 6 | POST | `/recommendations` | `IMPLEMENTED` | Quieter nearby H3 area recommendations |
+| 7 | POST | `/predictions/explanation` | `PLANNED_MVP` | Backend-generated explanation for one prediction |
+| 8 | POST | `/recommendations/quiet-times` | `PLANNED_MVP` | Quieter time recommendations for one coordinate |
+| 9 | POST | `/recommendations/places` | `PLANNED_AFTER_POI_SOURCE` | Rank candidate places using POI and crowd prediction data |
+| 10 | GET | `/poi/search` | `PLANNED_AFTER_POI_SOURCE` | Search POIs from the selected backend POI source/catalog |
+| 11 | GET | `/poi/{poiId}` | `PLANNED_AFTER_POI_SOURCE` | Get normalized POI details |
+| 12 | GET | `/poi/nearby` | `PLANNED_AFTER_POI_SOURCE` | Find nearby POIs around coordinates |
+| 13 | POST | `/itineraries` | `PLANNED_AFTER_POI_SOURCE` | Build a crowd-aware itinerary from candidate POIs |
+| 14 | POST | `/routes/crowd-aware` | `PLANNED_AFTER_MVP` | Route-level crowd scoring for frontend-provided route segments |
+| 15 | POST | `/events/impact` | `PLANNED_AFTER_MVP` | Estimate event impact on crowd predictions |
+| 16 | GET | `/alerts/crowd` | `PLANNED_AFTER_MVP` | Return crowd/event alerts for an area and time window |
+| 17 | POST | `/feedback` | `IMPLEMENTED` | Store user feedback about prediction usefulness |
+| 18 | GET | `/admin/stats/predictions` | `IMPLEMENTED` | Prediction request statistics |
+| 19 | GET | `/admin/stats/feedback` | `PLANNED_MVP` | Feedback analytics |
 
-Removed from backend scope:
+## 6. Implemented Endpoints
 
-| Removed endpoint | Reason |
-|---|---|
-| `GET /locations/search` | Frontend / online POI API handles place search |
-| `GET /locations/{locationId}` | Backend no longer depends on stored backend location IDs |
-| `GET /locations/nearby` | Replaced by future POI-based recommendation flow |
-| `POST /sessions` | Anonymous sessions removed because app uses login |
-| `PUT /sessions/{sessionId}/preferences` | Replaced by authenticated user preferences |
-| `POST /chat/messages` | Chatbot is frontend-owned |
-
-## 8. Implemented Endpoints
-
-### 8.1 Health Check
+### 6.1 Health Check
 
 `GET /health`
-
-State: `IMPLEMENTED`
 
 Response `200`:
 
@@ -238,16 +156,29 @@ Response `200`:
     "uptimeSeconds": 3600
   },
   "meta": {
-    "generatedAt": "2026-07-02T12:00:00Z"
+    "generatedAt": "2026-07-07T12:00:00Z"
   }
 }
 ```
 
-### 8.2 Single Crowd Prediction
+Response `503`:
+
+```json
+{
+  "success": false,
+  "error": {
+    "code": "DATABASE_UNAVAILABLE",
+    "message": "Database connection failed"
+  },
+  "meta": {
+    "generatedAt": "2026-07-07T12:00:00Z"
+  }
+}
+```
+
+### 6.2 Single Crowd Prediction
 
 `POST /predictions`
-
-State: `IMPLEMENTED`
 
 Request:
 
@@ -260,6 +191,13 @@ Request:
 }
 ```
 
+Validation:
+
+- `lat`, `lng`, and `targetTime` are required.
+- `targetTime` must be a valid date-time string.
+- `durationMinutes` must be between 15 and 240 when provided.
+- Coordinates must be inside the supported Manhattan coverage area.
+
 Response `200`:
 
 ```json
@@ -267,47 +205,45 @@ Response `200`:
   "success": true,
   "data": {
     "prediction": {
-      "predictionId": "ml_892a100d67bffff_1782938161771",
+      "predictionId": "grid_123",
       "h3Cell": "892a100d67bffff",
       "coordinates": {
         "lat": 40.758,
         "lng": -73.9855
       },
       "matchedCoordinates": {
-        "lat": 40.758,
-        "lng": -73.9855
+        "lat": 40.7581,
+        "lng": -73.9854
       },
       "targetTime": "2026-07-01T16:30:00-04:00",
       "durationMinutes": 60,
-      "busynessScore": 100,
+      "busynessScore": 82,
       "busynessLevel": "very_busy",
       "crowdCategory": "Very Busy",
       "pedestriansPredicted": 3067.3,
       "period": "PM",
-      "confidence": 0.8,
-      "modelVersion": "ml-fastapi-v1.0",
-      "cached": false,
-      "source": "ml_fastapi"
+      "confidence": 0.6,
+      "modelVersion": "h3-grid-v0.1",
+      "cached": true,
+      "source": "h3_grid_scores"
     }
   },
   "meta": {
-    "modelVersion": "ml-fastapi-v1.0",
-    "generatedAt": "2026-07-02T12:00:00Z"
+    "modelVersion": "h3-grid-v0.1",
+    "generatedAt": "2026-07-07T12:00:00Z"
   }
 }
 ```
 
-Behavior:
+Backend behavior:
 
-- Tries FastAPI ML first.
-- Falls back to Supabase `h3_grid_scores` if ML is unavailable.
-- Logs request into `prediction_requests`.
+- Try FastAPI ML first when `ML_API_BASE_URL` is configured.
+- Fall back to Supabase `h3_grid_scores` when ML is unavailable.
+- Save the request to `prediction_requests`.
 
-### 8.3 Batch Crowd Prediction
+### 6.3 Batch Crowd Prediction
 
 `POST /predictions/batch`
-
-State: `IMPLEMENTED`
 
 Request:
 
@@ -315,20 +251,26 @@ Request:
 {
   "targetTime": "2026-07-01T16:30:00-04:00",
   "durationMinutes": 60,
-  "locations": [
+  "coordinates": [
     {
-      "locationId": "times-square",
+      "clientId": "times-square-card",
       "lat": 40.758,
       "lng": -73.9855
     },
     {
-      "locationId": "union-square",
+      "clientId": "union-square-card",
       "lat": 40.7359,
       "lng": -73.9911
     }
   ]
 }
 ```
+
+Validation:
+
+- `coordinates` must contain 1 to 100 items.
+- Each item must include valid `lat` and `lng`.
+- `clientId` is optional and is echoed back when provided.
 
 Response `200`:
 
@@ -340,22 +282,24 @@ Response `200`:
     "durationMinutes": 60,
     "predictions": [
       {
-        "predictionId": "ml_892a100d67bffff_1782938184499",
-        "locationId": "times-square",
+        "predictionId": "grid_123",
+        "clientId": "times-square-card",
         "h3Cell": "892a100d67bffff",
         "coordinates": {
           "lat": 40.758,
           "lng": -73.9855
         },
-        "busynessScore": 100,
+        "matchedCoordinates": {
+          "lat": 40.7581,
+          "lng": -73.9854
+        },
+        "busynessScore": 82,
         "busynessLevel": "very_busy",
-        "crowdCategory": "Very Busy",
-        "pedestriansPredicted": 3067.3,
         "period": "PM",
-        "confidence": 0.8,
-        "modelVersion": "ml-fastapi-v1.0",
-        "cached": false,
-        "source": "ml_fastapi"
+        "confidence": 0.6,
+        "modelVersion": "h3-grid-v0.1",
+        "cached": true,
+        "source": "h3_grid_scores"
       }
     ],
     "warnings": []
@@ -363,120 +307,24 @@ Response `200`:
   "meta": {
     "count": 1,
     "warningCount": 0,
-    "generatedAt": "2026-07-02T12:00:00Z"
+    "generatedAt": "2026-07-07T12:00:00Z"
   }
 }
 ```
 
-Notes:
+### 6.4 Coordinate Forecast
 
-- `locationId` is optional and client-defined.
-- Backend uses `lat` and `lng`, not stored location rows.
-- Max batch size: 100.
-
-### 8.4 Map Heatmap
-
-`GET /map/heatmap?targetTime={iso}&limit={limit}&source={source}`
-
-State: `IMPLEMENTED`
+`GET /predictions/forecast?lat={lat}&lng={lng}&startTime={iso}&endTime={iso}&limit={limit}`
 
 Query parameters:
 
 | Name | Required | Default | Notes |
 |---|---:|---|---|
-| `targetTime` | no | current time | Valid date-time string |
-| `limit` | no | 100 | Max 524 |
-| `source` | no | `auto` | `auto`, `ml`, or `database` |
-
-Response `200`:
-
-```json
-{
-  "success": true,
-  "data": {
-    "targetTime": "2026-07-01T16:30:00-04:00",
-    "source": "ml_fastapi",
-    "points": [
-      {
-        "h3Cell": "892a1008807ffff",
-        "coordinates": {
-          "lat": 40.7952379433945,
-          "lng": -73.9725090299033
-        },
-        "period": "PM",
-        "queryTimestamp": "2026-07-01T16:30:00-04:00",
-        "crowdScore": 53,
-        "crowdLevel": "moderate",
-        "crowdCategory": "Moderate",
-        "pedestriansPredicted": 3399.1,
-        "source": "ml_fastapi"
-      }
-    ]
-  },
-  "meta": {
-    "count": 1,
-    "generatedAt": "2026-07-02T12:00:00Z"
-  }
-}
-```
-
-### 8.5 Quieter H3 Area Recommendations
-
-`POST /recommendations`
-
-State: `IMPLEMENTED`
-
-Current purpose:
-
-- Returns quieter H3 grid areas near the requested coordinate.
-- Does not yet return named POI places.
-
-Request:
-
-```json
-{
-  "lat": 40.758,
-  "lng": -73.9855,
-  "targetTime": "2026-07-01T16:30:00-04:00",
-  "limit": 5
-}
-```
-
-Response `200`:
-
-```json
-{
-  "success": true,
-  "data": {
-    "targetTime": "2026-07-01T16:30:00-04:00",
-    "recommendations": [
-      {
-        "type": "quieter_place",
-        "h3Cell": "892a100d6d3ffff",
-        "coordinates": {
-          "lat": 40.7714011091155,
-          "lng": -73.9737226811384
-        },
-        "busynessScore": 76,
-        "busynessLevel": "busy",
-        "pedestriansPredicted": 1679.2,
-        "period": "PM",
-        "reason": "This nearby grid cell has a lower predicted crowd score."
-      }
-    ]
-  },
-  "meta": {
-    "count": 1,
-    "generatedAt": "2026-07-02T12:00:00Z"
-  }
-}
-```
-
-### 8.6 Coordinate Forecast
-
-`GET /predictions/forecast?lat={lat}&lng={lng}&startTime={iso}&endTime={iso}&limit={limit}`
-
-State: `IMPLEMENTED`
+| `lat` | yes | - | Latitude |
+| `lng` | yes | - | Longitude |
+| `startTime` | yes | - | Valid date-time string |
+| `endTime` | yes | - | Valid date-time string |
+| `limit` | no | 24 | Max 100 |
 
 Response `200`:
 
@@ -503,35 +351,121 @@ Response `200`:
   },
   "meta": {
     "count": 1,
-    "generatedAt": "2026-07-02T12:00:00Z"
+    "generatedAt": "2026-07-07T12:00:00Z"
   }
 }
 ```
 
-Current limitation:
+### 6.5 Map Heatmap
 
-- Prototype endpoint.
-- Reads Supabase `h3_grid_scores`.
-- May return empty `forecast` if no rows exist for the selected H3 cell and time range.
-- Future version should call FastAPI `/predict/future` for generated time points.
+`GET /map/heatmap?targetTime={iso}&limit={limit}&source={source}`
 
-### 8.7 Submit User Feedback
+Query parameters:
 
-`POST /feedback`
+| Name | Required | Default | Notes |
+|---|---:|---|---|
+| `targetTime` | no | current time | Valid date-time string |
+| `limit` | no | 100 | Max 524 |
+| `source` | no | `auto` | `auto`, `ml`, or `database` |
 
-State: `IMPLEMENTED`
+Response `200`:
+
+```json
+{
+  "success": true,
+  "data": {
+    "targetTime": "2026-07-01T16:30:00-04:00",
+    "source": "h3_grid_scores",
+    "points": [
+      {
+        "h3Cell": "892a1008807ffff",
+        "coordinates": {
+          "lat": 40.7952379433945,
+          "lng": -73.9725090299033
+        },
+        "period": "PM",
+        "queryTimestamp": "2026-07-01T16:30:00-04:00",
+        "crowdScore": 53,
+        "crowdLevel": "moderate",
+        "crowdCategory": "Moderate",
+        "pedestriansPredicted": 3399.1,
+        "poiTotal": 42,
+        "source": "h3_grid_scores"
+      }
+    ]
+  },
+  "meta": {
+    "count": 1,
+    "generatedAt": "2026-07-07T12:00:00Z"
+  }
+}
+```
+
+### 6.6 Quieter Area Recommendations
+
+`POST /recommendations`
 
 Request:
 
 ```json
 {
-  "userId": "user_123",
+  "lat": 40.758,
+  "lng": -73.9855,
+  "targetTime": "2026-07-01T16:30:00-04:00",
+  "limit": 5
+}
+```
+
+Response `200`:
+
+```json
+{
+  "success": true,
+  "data": {
+    "targetTime": "2026-07-01T16:30:00-04:00",
+    "recommendations": [
+      {
+        "type": "quieter_area",
+        "h3Cell": "892a100d6d3ffff",
+        "coordinates": {
+          "lat": 40.7714011091155,
+          "lng": -73.9737226811384
+        },
+        "busynessScore": 38,
+        "busynessLevel": "quiet",
+        "pedestriansPredicted": 920.4,
+        "period": "PM",
+        "reason": "This nearby H3 area has a lower predicted crowd score."
+      }
+    ]
+  },
+  "meta": {
+    "count": 1,
+    "generatedAt": "2026-07-07T12:00:00Z"
+  }
+}
+```
+
+### 6.7 Submit Feedback
+
+`POST /feedback`
+
+Request:
+
+```json
+{
+  "userId": "optional_user_id",
   "h3Cell": "892a100d67bffff",
   "rating": 5,
   "wasUseful": true,
   "comment": "The prediction was useful."
 }
 ```
+
+Validation:
+
+- `rating` must be an integer from 1 to 5.
+- `userId`, `h3Cell`, `wasUseful`, and `comment` are optional.
 
 Response `201`:
 
@@ -541,25 +475,30 @@ Response `201`:
   "data": {
     "feedback": {
       "id": "1",
-      "userId": "user_123",
+      "userId": "optional_user_id",
       "h3Cell": "892a100d67bffff",
       "rating": 5,
       "wasUseful": true,
       "comment": "The prediction was useful.",
-      "createdAt": "2026-07-02T12:00:00Z"
+      "createdAt": "2026-07-07T12:00:00Z"
     }
   },
   "meta": {
-    "generatedAt": "2026-07-02T12:00:00Z"
+    "generatedAt": "2026-07-07T12:00:00Z"
   }
 }
 ```
 
-### 8.8 Admin Prediction Statistics
+### 6.8 Admin Prediction Statistics
 
 `GET /admin/stats/predictions?startDate={iso}&endDate={iso}`
 
-State: `IMPLEMENTED`
+Query parameters:
+
+| Name | Required | Default | Notes |
+|---|---:|---|---|
+| `startDate` | no | all time | Valid date-time string |
+| `endDate` | no | all time | Valid date-time string |
 
 Response `200`:
 
@@ -584,66 +523,18 @@ Response `200`:
   "meta": {
     "startDate": null,
     "endDate": null,
-    "generatedAt": "2026-07-02T12:00:00Z"
+    "generatedAt": "2026-07-07T12:00:00Z"
   }
 }
 ```
 
-## 9. Planned MVP Endpoints
+## 7. Planned Backend Endpoints
 
-### 9.1 Prediction Explanation
-
-`POST /explanations`
-
-State: `PLANNED_MVP`
-
-Purpose:
-
-- Explain why an area is predicted to be busy or quiet.
-- Chat UI remains frontend-owned.
-- Backend can start with rule-based explanations grounded in prediction fields.
-
-Request:
-
-```json
-{
-  "lat": 40.758,
-  "lng": -73.9855,
-  "targetTime": "2026-07-01T16:30:00-04:00",
-  "h3Cell": "892a100d67bffff",
-  "busynessScore": 100,
-  "language": "en"
-}
-```
-
-Response `200`:
-
-```json
-{
-  "success": true,
-  "data": {
-    "explanation": {
-      "summary": "This area is expected to be very busy at the selected time.",
-      "reasons": [
-        "The selected time period usually has high activity.",
-        "Nearby transit and visitor activity may increase foot traffic.",
-        "The H3 grid cell has a high predicted crowd score."
-      ],
-      "suggestedAction": "Consider choosing a quieter nearby grid area or a different time.",
-      "disclaimer": "This is a model prediction, not a live crowd count."
-    }
-  },
-  "meta": {
-    "generatedAt": "2026-07-02T12:00:00Z"
-  }
-}
-```
-
-### 9.2 Quieter Time Recommendation
+### 7.1 Quieter Time Recommendations
 
 `POST /recommendations/quiet-times`
 
-State: `PLANNED_MVP`
+Purpose: recommend lower-crowd times for the same coordinate within a client-provided time window.
 
 Request:
 
@@ -680,111 +571,16 @@ Response `200`:
     ]
   },
   "meta": {
-    "generatedAt": "2026-07-02T12:00:00Z"
+    "generatedAt": "2026-07-07T12:00:00Z"
   }
 }
 ```
 
-Implementation options:
-
-- query multiple rows from `h3_grid_scores`;
-- or call FastAPI `/predict/future` for multiple time points.
-
-### 9.3 Read Current User Preferences
-
-`GET /users/me/preferences`
-
-State: `PLANNED_MVP`
-
-Future auth rule:
-
-- Requires valid Clerk JWT.
-- Backend derives `userId` from token, not from request body.
-
-Response `200`:
-
-```json
-{
-  "success": true,
-  "data": {
-    "userId": "user_123",
-    "preferences": {
-      "travelPace": "relaxed",
-      "interests": ["parks", "museums"],
-      "budgetRange": "medium",
-      "crowdTolerance": "low",
-      "mobilityNeeds": ["step_free"],
-      "dietaryNeeds": [],
-      "inclusionNeeds": ["quiet_spaces"],
-      "onboardingCompleted": true,
-      "updatedAt": "2026-07-02T12:00:00Z"
-    }
-  },
-  "meta": {
-    "generatedAt": "2026-07-02T12:00:00Z"
-  }
-}
-```
-
-### 9.4 Update Current User Preferences
-
-`PUT /users/me/preferences`
-
-State: `PLANNED_MVP`
-
-Request:
-
-```json
-{
-  "travelPace": "relaxed",
-  "interests": ["parks", "food", "museums"],
-  "budgetRange": "medium",
-  "crowdTolerance": "low",
-  "mobilityNeeds": ["step_free"],
-  "dietaryNeeds": ["vegetarian"],
-  "inclusionNeeds": ["quiet_spaces"],
-  "onboardingCompleted": true
-}
-```
-
-Response `200`:
-
-```json
-{
-  "success": true,
-  "data": {
-    "userId": "user_123",
-    "preferences": {
-      "travelPace": "relaxed",
-      "interests": ["parks", "food", "museums"],
-      "budgetRange": "medium",
-      "crowdTolerance": "low",
-      "mobilityNeeds": ["step_free"],
-      "dietaryNeeds": ["vegetarian"],
-      "inclusionNeeds": ["quiet_spaces"],
-      "onboardingCompleted": true,
-      "updatedAt": "2026-07-02T12:00:00Z"
-    }
-  },
-  "meta": {
-    "generatedAt": "2026-07-02T12:00:00Z"
-  }
-}
-```
-
-## 10. Planned After POI Source
-
-### 10.1 POI-Aware Place Recommendations
+### 7.2 Candidate Place Recommendations
 
 `POST /recommendations/places`
 
-State: `PLANNED_AFTER_POI`
-
-Purpose:
-
-- Rank named candidate places using crowd prediction, distance, category, and user preferences.
-- The backend does not perform general place search.
-- Frontend or online POI API provides candidate places. Any `preferenceOverrides` field is temporary for planning; target implementation should read preferences from the authenticated Clerk user.
+Purpose: rank candidate places that the frontend has already resolved through its own place search or geocoding provider.
 
 Request:
 
@@ -804,14 +600,9 @@ Request:
         "lat": 40.7812,
         "lng": -73.9665
       },
-      "source": "online_poi_api"
+      "source": "frontend_place_provider"
     }
   ],
-  "preferenceOverrides": {
-    "crowdTolerance": "low",
-    "interests": ["parks"],
-    "mobilityNeeds": ["step_free"]
-  },
   "limit": 5
 }
 ```
@@ -825,7 +616,7 @@ Response `200`:
     "targetTime": "2026-07-01T16:30:00-04:00",
     "recommendations": [
       {
-        "type": "poi_place",
+        "type": "candidate_place",
         "rank": 1,
         "place": {
           "placeId": "poi_1",
@@ -835,7 +626,7 @@ Response `200`:
             "lat": 40.7812,
             "lng": -73.9665
           },
-          "source": "online_poi_api"
+          "source": "frontend_place_provider"
         },
         "prediction": {
           "h3Cell": "892a10089abffff",
@@ -845,210 +636,23 @@ Response `200`:
           "source": "ml_fastapi"
         },
         "distanceMeters": 2400,
-        "preferenceMatch": {
-          "matchesInterests": true,
-          "crowdToleranceMatch": true,
-          "mobilityMatch": null
-        },
-        "reason": "This place matches the selected interest and is predicted to be less crowded than the current area."
+        "reason": "This place is predicted to be less crowded than the current area."
       }
     ],
-    "warnings": [
-      {
-        "code": "ACCESSIBILITY_DATA_UNAVAILABLE",
-        "message": "Accessibility matching is incomplete until the POI source provides accessibility fields."
-      }
-    ]
+    "warnings": []
   },
   "meta": {
     "count": 1,
-    "generatedAt": "2026-07-02T12:00:00Z"
+    "generatedAt": "2026-07-07T12:00:00Z"
   }
 }
 ```
 
-## 11. Future Full-Project Endpoints
-
-### 11.1 Custom Itinerary
-
-`POST /itineraries`
-
-State: `FUTURE`
-
-Request:
-
-```json
-{
-  "startLocation": {
-    "lat": 40.758,
-    "lng": -73.9855
-  },
-  "endLocation": {
-    "lat": 40.758,
-    "lng": -73.9855
-  },
-  "startTime": "2026-07-01T10:00:00-04:00",
-  "endTime": "2026-07-01T16:00:00-04:00",
-  "interests": ["food", "art", "parks"],
-  "candidatePlaces": [
-    {
-      "placeId": "poi_1",
-      "name": "Museum of Modern Art",
-      "category": "museum",
-      "coordinates": {
-        "lat": 40.7614,
-        "lng": -73.9776
-      },
-      "source": "online_poi_api"
-    }
-  ],
-  "preferenceOverrides": {
-    "crowdTolerance": "low",
-    "travelPace": "relaxed",
-    "mobilityNeeds": ["step_free"],
-    "dietaryNeeds": ["vegetarian"]
-  },
-  "constraints": {
-    "maxStops": 5,
-    "avoidVeryBusy": true,
-    "transportModes": ["walk", "transit"]
-  }
-}
-```
-
-Response `200`:
-
-```json
-{
-  "success": true,
-  "data": {
-    "itinerary": {
-      "id": "itin_123",
-      "summary": "A relaxed crowd-aware plan for food, art, and parks.",
-      "startTime": "2026-07-01T10:00:00-04:00",
-      "endTime": "2026-07-01T16:00:00-04:00",
-      "stops": [
-        {
-          "order": 1,
-          "arrivalTime": "2026-07-01T10:00:00-04:00",
-          "departureTime": "2026-07-01T11:30:00-04:00",
-          "place": {
-            "placeId": "poi_1",
-            "name": "Museum of Modern Art",
-            "category": "museum",
-            "coordinates": {
-              "lat": 40.7614,
-              "lng": -73.9776
-            }
-          },
-          "prediction": {
-            "busynessScore": 48,
-            "busynessLevel": "moderate",
-            "h3Cell": "892a100d2d7ffff"
-          },
-          "reason": "This stop matches the user's art interest and is predicted to be less crowded in the morning."
-        }
-      ],
-      "routeSummary": {
-        "totalDistanceMeters": 3200,
-        "totalTravelMinutes": 48,
-        "transportModes": ["walk", "transit"]
-      },
-      "warnings": [
-        {
-          "code": "POI_DATA_LIMITED",
-          "message": "Opening hours and accessibility data may be incomplete."
-        }
-      ],
-      "disclaimer": "Itinerary is generated from predictions and available POI data."
-    }
-  },
-  "meta": {
-    "planningMode": "future_llm_or_rule_based",
-    "generatedAt": "2026-07-02T12:00:00Z"
-  }
-}
-```
-
-### 11.2 Crowd-Aware Route Guidance
-
-`POST /routes/crowd-aware`
-
-State: `FUTURE`
-
-Request:
-
-```json
-{
-  "origin": {
-    "lat": 40.758,
-    "lng": -73.9855
-  },
-  "destination": {
-    "lat": 40.7812,
-    "lng": -73.9665
-  },
-  "targetTime": "2026-07-01T16:30:00-04:00",
-  "transportMode": "walk",
-  "preferenceOverrides": {
-    "crowdTolerance": "low",
-    "mobilityNeeds": ["step_free"]
-  }
-}
-```
-
-Response `200`:
-
-```json
-{
-  "success": true,
-  "data": {
-    "routes": [
-      {
-        "routeId": "route_1",
-        "transportMode": "walk",
-        "durationMinutes": 32,
-        "distanceMeters": 2600,
-        "overallCrowdScore": 58,
-        "overallCrowdLevel": "moderate",
-        "segments": [
-          {
-            "order": 1,
-            "start": {
-              "lat": 40.758,
-              "lng": -73.9855
-            },
-            "end": {
-              "lat": 40.765,
-              "lng": -73.98
-            },
-            "estimatedMinutes": 8,
-            "crowdScore": 72,
-            "crowdLevel": "busy",
-            "h3Cells": ["892a100d67bffff"]
-          }
-        ],
-        "warnings": [
-          {
-            "code": "ROUTING_DATA_LIMITED",
-            "message": "Route guidance depends on external routing data."
-          }
-        ],
-        "reason": "This route avoids the busiest nearby H3 cells where possible."
-      }
-    ]
-  },
-  "meta": {
-    "generatedAt": "2026-07-02T12:00:00Z"
-  }
-}
-```
-
-### 11.3 Admin Feedback Statistics
+### 7.3 Admin Feedback Statistics
 
 `GET /admin/stats/feedback?startDate={iso}&endDate={iso}`
 
-State: `FUTURE`
+Purpose: summarize feedback quality and usefulness by time range and H3 cell.
 
 Response `200`:
 
@@ -1074,104 +678,46 @@ Response `200`:
         "rating": 5,
         "wasUseful": true,
         "comment": "The prediction was useful.",
-        "createdAt": "2026-07-02T12:00:00Z"
+        "createdAt": "2026-07-07T12:00:00Z"
       }
     ]
   },
   "meta": {
     "startDate": null,
     "endDate": null,
-    "generatedAt": "2026-07-02T12:00:00Z"
+    "generatedAt": "2026-07-07T12:00:00Z"
   }
 }
 ```
 
-## 12. Internal ML Integration
+### 7.4 Crowd-Aware Route Scoring
 
-Frontend should not call FastAPI directly.
+`POST /routes/crowd-aware`
 
-Express uses:
-
-```text
-ML_API_BASE_URL=http://localhost:8000
-```
-
-Current FastAPI ML endpoints:
-
-```text
-GET  /
-POST /predict/crowd
-POST /predict/future
-GET  /predict/crowd-score
-```
-
-### 12.1 Internal Single ML Prediction
-
-`POST /internal/ml/predict-busyness`
-
-State: `INTERNAL`
-
-Request:
-
-```json
-{
-  "lat": 40.758,
-  "lng": -73.9855,
-  "targetTime": "2026-07-01T16:30:00-04:00",
-  "durationMinutes": 60
-}
-```
-
-Response `200`:
-
-```json
-{
-  "success": true,
-  "data": {
-    "prediction": {
-      "h3Cell": "892a100d67bffff",
-      "coordinates": {
-        "lat": 40.758,
-        "lng": -73.9855
-      },
-      "targetTime": "2026-07-01T16:30:00-04:00",
-      "period": "PM",
-      "busynessScore": 100,
-      "busynessLevel": "very_busy",
-      "crowdCategory": "Very Busy",
-      "pedestriansPredicted": 3067.3,
-      "modelVersion": "ml-fastapi-v1.0",
-      "source": "ml_fastapi"
-    }
-  },
-  "meta": {
-    "generatedAt": "2026-07-02T12:00:00Z"
-  }
-}
-```
-
-Notes:
-
-- This endpoint is not required by frontend/mobile.
-- Current Express code already calls FastAPI internally.
-- This route can be added later for internal testing if useful.
-
-### 12.2 Internal Batch ML Prediction
-
-`POST /internal/ml/predict-busyness-batch`
-
-State: `INTERNAL`
+Purpose: score route segments supplied by the frontend or routing provider. The backend does not generate the route geometry.
 
 Request:
 
 ```json
 {
   "targetTime": "2026-07-01T16:30:00-04:00",
-  "locations": [
+  "routes": [
     {
-      "locationId": "times-square",
-      "lat": 40.758,
-      "lng": -73.9855
+      "routeId": "route_1",
+      "transportMode": "walk",
+      "segments": [
+        {
+          "order": 1,
+          "start": {
+            "lat": 40.758,
+            "lng": -73.9855
+          },
+          "end": {
+            "lat": 40.765,
+            "lng": -73.98
+          }
+        }
+      ]
     }
   ]
 }
@@ -1183,50 +729,369 @@ Response `200`:
 {
   "success": true,
   "data": {
-    "targetTime": "2026-07-01T16:30:00-04:00",
-    "results": [
+    "routes": [
       {
-        "locationId": "times-square",
-        "h3Cell": "892a100d67bffff",
-        "busynessScore": 100,
-        "busynessLevel": "very_busy",
-        "crowdCategory": "Very Busy",
-        "pedestriansPredicted": 3067.3,
-        "source": "ml_fastapi"
+        "routeId": "route_1",
+        "transportMode": "walk",
+        "overallCrowdScore": 58,
+        "overallCrowdLevel": "moderate",
+        "segments": [
+          {
+            "order": 1,
+            "crowdScore": 72,
+            "crowdLevel": "busy",
+            "h3Cells": ["892a100d67bffff"]
+          }
+        ],
+        "reason": "This route crosses some busy H3 areas."
       }
-    ],
-    "errors": []
+    ]
   },
   "meta": {
-    "count": 1,
-    "errorCount": 0,
-    "generatedAt": "2026-07-02T12:00:00Z"
+    "generatedAt": "2026-07-07T12:00:00Z"
   }
 }
 ```
 
-Notes:
+### 7.5 Prediction Explanation
 
-- If FastAPI later provides a real batch endpoint, Express should call that instead of looping through single predictions.
-- Partial success should be supported.
+`POST /predictions/explanation`
 
-## 13. Data / ML Notes
+Purpose: generate structured explanation text for one prediction result that clients may display in their own UI.
 
-Current ML crowd prediction:
+Request:
 
-- Manhattan is divided into 524 H3 grid cells.
-- Crowd prediction is built and being tested.
-- The model uses pedestrian counts, transit activity, POI density, weather, events, and holidays.
-- Only some H3 cells have real pedestrian ground truth; many predictions rely on proxy features.
-- Current coverage is Manhattan-only.
+```json
+{
+  "lat": 40.758,
+  "lng": -73.9855,
+  "targetTime": "2026-07-01T16:30:00-04:00",
+  "h3Cell": "892a100d67bffff",
+  "busynessScore": 82,
+  "busynessLevel": "very_busy",
+  "period": "PM",
+  "language": "en"
+}
+```
 
-Recommendation and custom itinerary:
+Response `200`:
 
-- Planned as Feature 2 in Data/ML.
-- Requires POI catalog or online POI provider.
-- May later use an LLM/tool-calling agent that calls crowd prediction as a tool.
+```json
+{
+  "success": true,
+  "data": {
+    "explanation": {
+      "summary": "This area is expected to be very busy at the selected time.",
+      "reasons": [
+        "The selected time period usually has high activity.",
+        "Nearby transit, visitor activity, or POI density may increase foot traffic."
+      ],
+      "suggestedAction": "Consider a quieter nearby area or a different time.",
+      "disclaimer": "This is a model prediction, not a live crowd count."
+    }
+  },
+  "meta": {
+    "generatedAt": "2026-07-07T12:00:00Z"
+  }
+}
+```
 
-## 14. Error Codes
+### 7.6 POI Search
+
+`GET /poi/search?q={query}&category={category}&lat={lat}&lng={lng}&limit={limit}`
+
+Purpose: search POIs from the selected backend POI source or cached POI catalog once that source is confirmed.
+
+Response `200`:
+
+```json
+{
+  "success": true,
+  "data": {
+    "query": "museum",
+    "pois": [
+      {
+        "poiId": "poi_1",
+        "name": "Museum of Modern Art",
+        "category": "museum",
+        "coordinates": {
+          "lat": 40.7614,
+          "lng": -73.9776
+        },
+        "source": "poi_provider",
+        "address": "11 W 53rd St, New York, NY"
+      }
+    ]
+  },
+  "meta": {
+    "count": 1,
+    "generatedAt": "2026-07-07T12:00:00Z"
+  }
+}
+```
+
+### 7.7 POI Detail
+
+`GET /poi/{poiId}`
+
+Purpose: return normalized POI details from the selected POI source or cached POI catalog.
+
+Response `200`:
+
+```json
+{
+  "success": true,
+  "data": {
+    "poi": {
+      "poiId": "poi_1",
+      "name": "Museum of Modern Art",
+      "category": "museum",
+      "coordinates": {
+        "lat": 40.7614,
+        "lng": -73.9776
+      },
+      "source": "poi_provider",
+      "address": "11 W 53rd St, New York, NY",
+      "openingHours": null,
+      "accessibility": null
+    }
+  },
+  "meta": {
+    "generatedAt": "2026-07-07T12:00:00Z"
+  }
+}
+```
+
+### 7.8 Nearby POIs
+
+`GET /poi/nearby?lat={lat}&lng={lng}&radiusMeters={radiusMeters}&category={category}&limit={limit}`
+
+Purpose: return POIs near a coordinate after the backend POI source is available.
+
+Response `200`:
+
+```json
+{
+  "success": true,
+  "data": {
+    "origin": {
+      "lat": 40.758,
+      "lng": -73.9855
+    },
+    "pois": [
+      {
+        "poiId": "poi_1",
+        "name": "Bryant Park",
+        "category": "park",
+        "coordinates": {
+          "lat": 40.7536,
+          "lng": -73.9832
+        },
+        "distanceMeters": 520,
+        "source": "poi_provider"
+      }
+    ]
+  },
+  "meta": {
+    "count": 1,
+    "generatedAt": "2026-07-07T12:00:00Z"
+  }
+}
+```
+
+### 7.9 Crowd-Aware Itinerary
+
+`POST /itineraries`
+
+Purpose: build a timed itinerary from candidate places, crowd predictions, travel-time assumptions, and user-selected constraints supplied by the client.
+
+Request:
+
+```json
+{
+  "startLocation": {
+    "lat": 40.758,
+    "lng": -73.9855
+  },
+  "startTime": "2026-07-01T10:00:00-04:00",
+  "endTime": "2026-07-01T16:00:00-04:00",
+  "candidatePlaces": [
+    {
+      "poiId": "poi_1",
+      "name": "Museum of Modern Art",
+      "category": "museum",
+      "coordinates": {
+        "lat": 40.7614,
+        "lng": -73.9776
+      }
+    }
+  ],
+  "constraints": {
+    "maxStops": 5,
+    "avoidVeryBusy": true,
+    "transportModes": ["walk", "transit"]
+  }
+}
+```
+
+Response `200`:
+
+```json
+{
+  "success": true,
+  "data": {
+    "itinerary": {
+      "itineraryId": "itin_123",
+      "summary": "A crowd-aware Manhattan plan for the selected time window.",
+      "stops": [
+        {
+          "order": 1,
+          "arrivalTime": "2026-07-01T10:00:00-04:00",
+          "departureTime": "2026-07-01T11:30:00-04:00",
+          "place": {
+            "poiId": "poi_1",
+            "name": "Museum of Modern Art"
+          },
+          "prediction": {
+            "busynessScore": 48,
+            "busynessLevel": "moderate",
+            "h3Cell": "892a100d2d7ffff"
+          },
+          "reason": "This stop is predicted to be less crowded during the selected window."
+        }
+      ],
+      "warnings": []
+    }
+  },
+  "meta": {
+    "generatedAt": "2026-07-07T12:00:00Z"
+  }
+}
+```
+
+### 7.10 Event Impact
+
+`POST /events/impact`
+
+Purpose: estimate how known events may affect crowd prediction for an area and time.
+
+Request:
+
+```json
+{
+  "lat": 40.758,
+  "lng": -73.9855,
+  "targetTime": "2026-07-01T16:30:00-04:00",
+  "radiusMeters": 1000
+}
+```
+
+Response `200`:
+
+```json
+{
+  "success": true,
+  "data": {
+    "impact": {
+      "level": "medium",
+      "scoreAdjustment": 8,
+      "events": [
+        {
+          "eventId": "event_1",
+          "name": "Concert near Times Square",
+          "startTime": "2026-07-01T18:00:00-04:00",
+          "distanceMeters": 650
+        }
+      ],
+      "reason": "Nearby events may increase foot traffic around the selected time."
+    }
+  },
+  "meta": {
+    "generatedAt": "2026-07-07T12:00:00Z"
+  }
+}
+```
+
+### 7.11 Crowd Alerts
+
+`GET /alerts/crowd?lat={lat}&lng={lng}&startTime={iso}&endTime={iso}&radiusMeters={radiusMeters}`
+
+Purpose: return crowd and event alerts for a user-selected area and time window.
+
+Response `200`:
+
+```json
+{
+  "success": true,
+  "data": {
+    "alerts": [
+      {
+        "alertId": "alert_1",
+        "type": "high_crowd_prediction",
+        "severity": "warning",
+        "title": "Very busy period expected",
+        "message": "This area is predicted to be very busy during the selected time window.",
+        "h3Cell": "892a100d67bffff",
+        "startTime": "2026-07-01T16:00:00-04:00",
+        "endTime": "2026-07-01T18:00:00-04:00"
+      }
+    ]
+  },
+  "meta": {
+    "count": 1,
+    "generatedAt": "2026-07-07T12:00:00Z"
+  }
+}
+```
+## 8. Internal ML Integration
+
+Frontend and mobile clients do not call FastAPI directly.
+
+Express uses this environment variable to call the ML service:
+
+```text
+ML_API_BASE_URL=http://localhost:8000
+```
+
+Current ML endpoints consumed by Express:
+
+```text
+POST /predict/crowd
+POST /predict/future
+GET  /predict/crowd-score
+```
+
+Expected ML prediction fields:
+
+```json
+{
+  "h3_cell": "892a100d67bffff",
+  "lat": 40.758,
+  "lon": -73.9855,
+  "timestamp": "2026-07-01T16:30:00-04:00",
+  "period": "PM",
+  "crowd_score": 0.82,
+  "crowd_category": "Very Busy",
+  "pedestrians": 3067.3
+}
+```
+
+## 9. Supabase PostgreSQL Usage
+
+The backend uses Supabase as a hosted PostgreSQL database through the `pg` driver and `DATABASE_URL` connection string.
+
+Current backend-owned tables:
+
+| Table | Backend usage |
+|---|---|
+| `h3_grid_scores` | Read prediction fallback, forecast, heatmap, and recommendation data |
+| `h3_grid_cells` | Read H3 cell centroids for ML heatmap requests |
+| `prediction_requests` | Insert prediction request logs and read admin prediction statistics |
+| `feedback` | Insert user feedback and read feedback statistics |
+
+Supabase is used as database infrastructure only. The backend does not expose Supabase keys to frontend or mobile clients.
+
+## 10. Error Codes
 
 | Code | HTTP | Meaning |
 |---|---:|---|
@@ -1237,42 +1102,8 @@ Recommendation and custom itinerary:
 | `PREDICTION_UNAVAILABLE` | 503 | No ML or fallback prediction available |
 | `ML_API_UNAVAILABLE` | 503 | FastAPI ML service unavailable |
 | `INVALID_RATING` | 422 | Feedback rating must be 1-5 |
-| `PREFERENCES_NOT_FOUND` | 404 | User preferences do not exist yet |
-| `UNAUTHORIZED` | 401 | Future auth token missing/invalid |
-| `FORBIDDEN` | 403 | Future auth valid but not allowed |
 | `INTERNAL_ERROR` | 500 | Unexpected server failure |
 
-## 15. Frontend Integration Flow
 
-Current flow:
 
-1. User logs in through Clerk on frontend.
-2. User searches/selects a place through frontend or online POI/geocoding API.
-3. Frontend obtains `lat`, `lng`, optional place name/category, and `targetTime`.
-4. Frontend calls `POST /predictions`.
-5. Frontend optionally calls `GET /map/heatmap`.
-6. Frontend optionally calls `POST /recommendations`.
-7. Frontend submits feedback with `POST /feedback`.
 
-Future POI-aware flow:
-
-1. Frontend obtains candidate POIs from online API.
-2. Frontend sends candidate POIs to `POST /recommendations/places`.
-3. Backend ranks candidates using crowd prediction and preferences.
-4. Future itinerary endpoint sequences places into a timed plan.
-
-## 16. Backend Implementation Priority
-
-Completed:
-
-1. Health check
-2. Supabase connection
-3. H3 grid data import
-4. Single prediction
-5. Batch prediction
-6. ML FastAPI gateway integration
-7. Heatmap
-8. Basic H3 recommendations
-9. Feedback
-10. Prediction logging
-11. Admin stats
