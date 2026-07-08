@@ -86,7 +86,7 @@ backend/
 
 Every prediction-style endpoint follows the same pattern:
 
-1. **Validate input** — coordinates must be finite numbers inside the Manhattan coverage box (lat `40.679–40.882`, lng `-74.020` to `-73.907`), and time values must parse as date-times. Invalid input returns a `400`/`422` error envelope immediately.
+1. **Validate input** — coordinates must be finite numbers inside the Manhattan coverage box (lat `40.679–40.882`, lng `-74.020` to `-73.907`), and time values must parse as date-times. All times are Manhattan local time (see [Time zones](#time-zones)). Invalid input returns a `400`/`422` error envelope immediately.
 2. **Try the ML service first** — when `ML_API_BASE_URL` is set, the backend calls the FastAPI service (`POST /predict/crowd` for current/past times, `POST /predict/future` for future times, body `{lat, lon, when}`). ML-backed responses carry `source: "ml_fastapi"` and `cached: false`.
 3. **Fall back to Supabase** — if ML is not configured, times out (`ML_API_TIMEOUT_MS`, default 5000 ms), or errors, the backend reads the nearest precomputed score from `h3_grid_scores`. These responses carry `source: "h3_grid_scores"` and `cached: true`.
 4. **Log the request** — every served prediction writes a row to `prediction_requests` for later analysis.
@@ -119,6 +119,7 @@ Configuration is read from a `.env` file at startup via `dotenv`. This file is n
 | `DATABASE_URL` | Yes | Supabase PostgreSQL connection string for `pg`. |
 | `ML_API_BASE_URL` | No | FastAPI ML service base URL, e.g. `http://localhost:8000`. Leave unset to run on database fallback only. |
 | `ML_API_TIMEOUT_MS` | No | Timeout for each ML request. Defaults to `5000`. |
+| `TZ` | Yes | Set to `America/New_York` so naive time strings are interpreted as Manhattan time (see [Time zones](#time-zones)). Set it in the shell/deployment environment, not in `.env` — Node reads `TZ` at process start. |
 
 The `DATABASE_URL` comes from Supabase Dashboard → Project Settings → Database → Connection string (URI format):
 
@@ -151,15 +152,17 @@ To exercise the ML-first path, start the FastAPI service from the `zentra-ml` re
 
 ```bash
 cd ../zentra-ml/api
-uvicorn main:app --reload --port 8000
+TZ=America/New_York uvicorn main:app --reload --port 8000
 ```
+
+The `TZ` variable makes the ML service interpret naive time strings as Manhattan time, matching the API-wide convention (see [Time zones](#time-zones)).
 
 Skipping this step is fine — every endpoint still works from the Supabase fallback.
 
 ### Step 5 — Start the server
 
 ```bash
-npm start
+TZ=America/New_York npm start
 ```
 
 You should see:
@@ -197,14 +200,14 @@ A `503` with code `DATABASE_UNAVAILABLE` means the `DATABASE_URL` is wrong or th
 
 ## Testing the API
 
-All endpoints live under `http://localhost:3000/api/v1`. The examples below cover every implemented endpoint; expected response shapes are in the [Endpoint Reference](#endpoint-reference).
+All endpoints live under `http://localhost:3000/api/v1`. The examples below cover every implemented endpoint; expected response shapes are in the [Endpoint Reference](#endpoint-reference). All times in the examples are Manhattan local time, written without an offset (see [Time zones](#time-zones)).
 
 ### Test 1 — Single prediction at Times Square
 
 ```bash
 curl -X POST http://localhost:3000/api/v1/predictions \
   -H "Content-Type: application/json" \
-  -d '{"lat":40.758,"lng":-73.9855,"targetTime":"2026-07-10T16:30:00-04:00","durationMinutes":60}'
+  -d '{"lat":40.758,"lng":-73.9855,"targetTime":"2026-07-10T16:30:00","durationMinutes":60}'
 ```
 
 Check the `source` field in the response: `ml_fastapi` means the ML service answered; `h3_grid_scores` means the database fallback was used.
@@ -215,7 +218,7 @@ Check the `source` field in the response: `ml_fastapi` means the ML service answ
 curl -X POST http://localhost:3000/api/v1/predictions/batch \
   -H "Content-Type: application/json" \
   -d '{
-    "targetTime": "2026-07-10T16:30:00-04:00",
+    "targetTime": "2026-07-10T16:30:00",
     "coordinates": [
       {"clientId": "times-square", "lat": 40.758, "lng": -73.9855},
       {"clientId": "union-square", "lat": 40.7359, "lng": -73.9911}
@@ -226,7 +229,7 @@ curl -X POST http://localhost:3000/api/v1/predictions/batch \
 ### Test 3 — Forecast over a time window
 
 ```bash
-curl "http://localhost:3000/api/v1/predictions/forecast?lat=40.758&lng=-73.9855&startTime=2026-07-10T00:00:00-04:00&endTime=2026-07-11T00:00:00-04:00&limit=6"
+curl "http://localhost:3000/api/v1/predictions/forecast?lat=40.758&lng=-73.9855&startTime=2026-07-10T00:00:00&endTime=2026-07-11T00:00:00&limit=6"
 ```
 
 ### Test 4 — Heatmap from the database fallback
@@ -242,7 +245,7 @@ Use `source=ml` to force the ML path (returns `503` if ML is unavailable), or om
 ```bash
 curl -X POST http://localhost:3000/api/v1/recommendations \
   -H "Content-Type: application/json" \
-  -d '{"lat":40.758,"lng":-73.9855,"targetTime":"2026-07-10T16:30:00-04:00","limit":3}'
+  -d '{"lat":40.758,"lng":-73.9855,"targetTime":"2026-07-10T16:30:00","limit":3}'
 ```
 
 ### Test 6 — Quieter times for the same spot
@@ -252,9 +255,9 @@ curl -X POST http://localhost:3000/api/v1/recommendations/quiet-times \
   -H "Content-Type: application/json" \
   -d '{
     "lat": 40.758, "lng": -73.9855,
-    "targetTime": "2026-07-10T16:30:00-04:00",
-    "startTime": "2026-07-10T09:00:00-04:00",
-    "endTime": "2026-07-10T21:00:00-04:00",
+    "targetTime": "2026-07-10T16:30:00",
+    "startTime": "2026-07-10T09:00:00",
+    "endTime": "2026-07-10T21:00:00",
     "limit": 3
   }'
 ```
@@ -266,7 +269,7 @@ curl -X POST http://localhost:3000/api/v1/recommendations/places \
   -H "Content-Type: application/json" \
   -d '{
     "currentLocation": {"lat": 40.758, "lng": -73.9855},
-    "targetTime": "2026-07-10T16:30:00-04:00",
+    "targetTime": "2026-07-10T16:30:00",
     "candidatePlaces": [
       {"placeId": "poi_1", "name": "Central Park", "category": "park",
        "coordinates": {"lat": 40.7812, "lng": -73.9665}}
@@ -279,7 +282,7 @@ curl -X POST http://localhost:3000/api/v1/recommendations/places \
 ```bash
 curl -X POST http://localhost:3000/api/v1/predictions/explanation \
   -H "Content-Type: application/json" \
-  -d '{"lat":40.758,"lng":-73.9855,"targetTime":"2026-07-10T16:30:00-04:00","busynessScore":82,"period":"PM"}'
+  -d '{"lat":40.758,"lng":-73.9855,"targetTime":"2026-07-10T16:30:00","busynessScore":82,"period":"PM"}'
 ```
 
 ### Test 9 — Validation errors (expected failures)
@@ -288,7 +291,7 @@ curl -X POST http://localhost:3000/api/v1/predictions/explanation \
 # Outside Manhattan coverage — returns 422 LOCATION_OUT_OF_COVERAGE
 curl -X POST http://localhost:3000/api/v1/predictions \
   -H "Content-Type: application/json" \
-  -d '{"lat":40.6501,"lng":-73.9496,"targetTime":"2026-07-10T16:30:00-04:00"}'
+  -d '{"lat":40.6501,"lng":-73.9496,"targetTime":"2026-07-10T16:30:00"}'
 
 # Missing targetTime — returns 400 INVALID_QUERY
 curl -X POST http://localhost:3000/api/v1/predictions \
@@ -327,7 +330,7 @@ Predicts the crowd level for one coordinate at one time.
 | Field | Type | Required | Notes |
 |-------|------|----------|-------|
 | `lat` / `lng` | float | yes | Must be inside the Manhattan coverage box |
-| `targetTime` | string | yes | ISO 8601 date-time — Manhattan local time with explicit offset recommended, e.g. `2026-07-10T16:30:00-04:00` (see [Time zones](#time-zones)) |
+| `targetTime` | string | yes | Manhattan local time, ISO 8601 without offset, e.g. `2026-07-10T16:30:00` (see [Time zones](#time-zones)) |
 | `durationMinutes` | int | no | Defaults to 60; accepted range 15–240 |
 
 **Response `200`:**
@@ -341,7 +344,7 @@ Predicts the crowd level for one coordinate at one time.
       "h3Cell": "892a100d67bffff",
       "coordinates": { "lat": 40.758, "lng": -73.9855 },
       "matchedCoordinates": { "lat": 40.7581, "lng": -73.9854 },
-      "targetTime": "2026-07-10T16:30:00-04:00",
+      "targetTime": "2026-07-10T16:30:00",
       "durationMinutes": 60,
       "busynessScore": 82,
       "busynessLevel": "very_busy",
@@ -373,7 +376,7 @@ Predicts the crowd level for one coordinate at one time.
 | `h3Cell` | string | Uber H3 resolution-9 hex cell ID (~150 m grid) matched to the coordinate |
 | `coordinates` | object | Echo of the requested `lat`/`lng` |
 | `matchedCoordinates` | object | Centroid of the H3 cell the prediction actually comes from |
-| `targetTime` | string | Echo of the requested time, returned as sent — no time-zone conversion is applied |
+| `targetTime` | string | Echo of the requested Manhattan time, returned as sent |
 | `busynessScore` | int | 0–100 crowd intensity (higher = busier) |
 | `busynessLevel` | string | `very_quiet` / `quiet` / `moderate` / `busy` / `very_busy` (see [thresholds](#busyness-levels)) |
 | `crowdCategory` | string | ML label such as `"Very Busy"` — present only on ML-backed responses |
@@ -399,7 +402,7 @@ Same prediction logic as above, applied to 1–100 coordinates in one call — u
 {
   "success": true,
   "data": {
-    "targetTime": "2026-07-10T16:30:00-04:00",
+    "targetTime": "2026-07-10T16:30:00",
     "durationMinutes": 60,
     "predictions": [ { "clientId": "times-square", "busynessScore": 82, "...": "..." } ],
     "warnings": [
@@ -421,7 +424,7 @@ Returns a time series of predicted crowd levels for one coordinate. The backend 
 | Name | Required | Default | Notes |
 |------|----------|---------|-------|
 | `lat` / `lng` | yes | — | Coordinate to forecast |
-| `startTime` / `endTime` | yes | — | Window bounds, ISO 8601 with explicit offset recommended (see [Time zones](#time-zones)) |
+| `startTime` / `endTime` | yes | — | Window bounds, Manhattan local time without offset (see [Time zones](#time-zones)) |
 | `limit` | no | 24 | Max 100 forecast entries |
 
 **Response `200`:**
@@ -432,11 +435,11 @@ Returns a time series of predicted crowd levels for one coordinate. The backend 
   "data": {
     "h3Cell": "892a100d67bffff",
     "coordinates": { "lat": 40.758, "lng": -73.9855 },
-    "startTime": "2026-07-10T00:00:00-04:00",
-    "endTime": "2026-07-11T00:00:00-04:00",
+    "startTime": "2026-07-10T00:00:00",
+    "endTime": "2026-07-11T00:00:00",
     "forecast": [
       {
-        "timestamp": "2026-07-10T20:30:00.000Z",
+        "timestamp": "2026-07-10T16:30:00.000Z",
         "period": "PM",
         "busynessScore": 82,
         "busynessLevel": "very_busy",
@@ -448,7 +451,7 @@ Returns a time series of predicted crowd levels for one coordinate. The backend 
 }
 ```
 
-`timestamp` values come from PostgreSQL `timestamptz` columns and are serialized in UTC (`Z` suffix); `period` is the Manhattan wall-clock bucket for that instant.
+`timestamp` values come from the grid data and represent Manhattan wall-clock time; database serialization appends a `Z` suffix, so read the date/time digits as Manhattan time and ignore the `Z` (see [Time zones](#time-zones)).
 
 ### POST /predictions/explanation
 
@@ -486,7 +489,7 @@ Returns crowd scores for many H3 cells at once, for rendering a map heatmap.
 
 | Name | Required | Default | Notes |
 |------|----------|---------|-------|
-| `targetTime` | no | current time (UTC) | ISO 8601 with explicit offset recommended (see [Time zones](#time-zones)) |
+| `targetTime` | no | current time | Manhattan local time without offset (see [Time zones](#time-zones)) |
 | `limit` | no | 100 | Max 524 (the full Manhattan grid) |
 | `source` | no | `auto` | `auto` tries ML then falls back; `ml` forces ML (503 if unavailable); `database` skips ML |
 
@@ -496,14 +499,14 @@ Returns crowd scores for many H3 cells at once, for rendering a map heatmap.
 {
   "success": true,
   "data": {
-    "targetTime": "2026-07-10T16:30:00-04:00",
+    "targetTime": "2026-07-10T16:30:00",
     "source": "h3_grid_scores",
     "points": [
       {
         "h3Cell": "892a1008807ffff",
         "coordinates": { "lat": 40.79523, "lng": -73.97250 },
         "period": "PM",
-        "queryTimestamp": "2026-07-10T20:30:00.000Z",
+        "queryTimestamp": "2026-07-10T16:30:00.000Z",
         "crowdScore": 53,
         "crowdLevel": "moderate",
         "pedestriansPredicted": 3399.1,
@@ -516,7 +519,7 @@ Returns crowd scores for many H3 cells at once, for rendering a map heatmap.
 }
 ```
 
-Database points include `poiTotal` (POI count in the cell); ML points include `crowdCategory` instead. `queryTimestamp` is UTC on database points and echoes the request time on ML points. The ML path calls the ML service once per cell, so large `limit` values respond noticeably faster with `source=database`.
+Database points include `poiTotal` (POI count in the cell); ML points include `crowdCategory` instead. The ML path calls the ML service once per cell, so large `limit` values respond noticeably faster with `source=database`.
 
 ### POST /recommendations
 
@@ -552,13 +555,13 @@ For a single coordinate, compares the crowd score at the chosen `targetTime` aga
   "success": true,
   "data": {
     "original": {
-      "targetTime": "2026-07-10T16:30:00-04:00",
+      "targetTime": "2026-07-10T16:30:00",
       "busynessScore": 86,
       "busynessLevel": "very_busy"
     },
     "quietTimes": [
       {
-        "targetTime": "2026-07-10T14:00:00.000Z",
+        "targetTime": "2026-07-10T10:00:00.000Z",
         "busynessScore": 42,
         "busynessLevel": "moderate",
         "confidence": 0.6,
@@ -570,7 +573,7 @@ For a single coordinate, compares the crowd score at the chosen `targetTime` aga
 }
 ```
 
-`quietTimes` is sorted from quietest to busiest and excludes the original `targetTime` itself. The `targetTime` inside each `quietTimes` entry comes from the forecast grid and is a UTC timestamp; the top-level `original.targetTime` echoes what was sent.
+`quietTimes` is sorted from quietest to busiest and excludes the original `targetTime` itself. The `targetTime` inside each `quietTimes` entry comes from the forecast grid (Manhattan time, serialized with a `Z` suffix); the top-level `original.targetTime` echoes what was sent.
 
 ### POST /recommendations/places
 
@@ -591,7 +594,7 @@ Ranks candidate places the client has already resolved through its own place sea
 {
   "success": true,
   "data": {
-    "targetTime": "2026-07-10T16:30:00-04:00",
+    "targetTime": "2026-07-10T16:30:00",
     "recommendations": [
       {
         "type": "candidate_place",
@@ -605,7 +608,7 @@ Ranks candidate places the client has already resolved through its own place sea
         },
         "prediction": {
           "h3Cell": "892a10089abffff",
-          "targetTime": "2026-07-10T20:30:00.000Z",
+          "targetTime": "2026-07-10T16:30:00.000Z",
           "busynessScore": 44,
           "busynessLevel": "moderate",
           "pedestriansPredicted": 1204.7,
@@ -668,21 +671,16 @@ Scores are normalised to an integer 0–100 (ML scores arriving as 0–1 fractio
 
 ### Time zones
 
-Time fields do not all share one time zone — the quick rule is: **timestamps read from the database come back in UTC, `period` buckets are Manhattan wall-clock, and echoed request times are returned exactly as you sent them.**
+**Every time value in this API is Manhattan local time** (`America/New_York` wall-clock time). There is one system-wide convention:
 
-| Field | Time zone |
-|-------|-----------|
-| `meta.generatedAt` | UTC, ISO 8601 with `Z` |
-| Forecast `timestamp`, heatmap `queryTimestamp`, quiet-times `quietTimes[].targetTime`, places `prediction.targetTime` (database-backed values) | UTC — stored as PostgreSQL `timestamptz` and serialized with `Z` |
-| `targetTime` / `startTime` / `endTime` echoed at the top level of responses | Returned as sent, no conversion |
-| `period` | Manhattan local wall-clock bucket (see [Periods](#periods)) |
+- **Request times** (`targetTime`, `startTime`, `endTime`) are sent as naive ISO 8601 — no offset, no `Z`: `2026-07-10T16:30:00` means 4:30 PM in Manhattan. Clients convert to Manhattan time before calling the API, using the IANA zone name (`America/New_York`) so daylight saving is handled automatically — never by appending `-04:00`/`-05:00` manually and never with `toISOString()` (which produces UTC).
+- **Response times** are Manhattan time too: echoed request fields come back exactly as sent, and `period` buckets refer to Manhattan hours (see [Periods](#periods)).
+- **Database-backed timestamps** (forecast `timestamp`, heatmap `queryTimestamp`, quiet-times `quietTimes[].targetTime`, places `prediction.targetTime`) represent Manhattan wall-clock time, but the database serialization appends a `Z` suffix — read the date/time digits as Manhattan time and ignore the `Z`.
+- **The one exception**: `meta.generatedAt` is response metadata (when the server built the response) and is a true UTC timestamp.
 
-Request times (`targetTime`, `startTime`, `endTime`) are parsed as ISO 8601, and how they are interpreted depends on whether they carry an offset:
+The server processes read naive time strings in their own local time zone, so both the Express server and the ML service run with the `TZ=America/New_York` environment variable to interpret them as Manhattan time — see [Run locally](#how-to-run-locally).
 
-- **With an explicit offset** (recommended) — e.g. `2026-07-10T16:30:00-04:00` — the value is an unambiguous absolute instant, which is what the database comparisons and the future-vs-current classification use. Write Manhattan local time with its own offset: `-04:00` while daylight saving is in effect (EDT, roughly March–November), `-05:00` otherwise (EST).
-- **Without an offset** — e.g. `2026-07-10T16:30:00` — the same string is read in the Node server's local time zone on one path and in the database session time zone (UTC on Supabase) on another, so it can resolve to different instants. Avoid this form.
-
-One nuance on the ML path: the ML service derives `period` from the hour digits exactly as written (`16:30` → `PM`) without any time-zone conversion, so the wall-clock part of the time you send should always be Manhattan local time regardless of the offset notation.
+Because naive wall-clock time has no offset, the daylight-saving switch produces one ambiguous hour a year (1:00–1:59 AM occurs twice each November) and one skipped hour (each March). At crowd-prediction granularity this has no practical effect.
 
 ### Coverage area
 
