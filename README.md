@@ -76,7 +76,7 @@ backend/
 ├── supabase/
 │   └── migrations/           # PostgreSQL functions used by the repositories
 ├── docs/
-│   └── api-contract.md       # Full API contract (incl. planned endpoints)
+│   └── api-contract.md       # API contract document
 └── package.json
 ```
 
@@ -312,7 +312,7 @@ curl -X POST http://localhost:3000/api/v1/predictions \
 | `POST` | `/api/v1/recommendations/quiet-times` | Quieter time recommendations for one coordinate |
 | `POST` | `/api/v1/recommendations/places` | Rank client-provided candidate places by predicted crowd |
 
-The full contract, including planned-but-not-yet-implemented endpoints (POI search, itineraries, routes, events, alerts), is in [`docs/api-contract.md`](docs/api-contract.md).
+This README focuses on the functionality that exists in the current code.
 
 ### GET /health
 
