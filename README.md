@@ -1,6 +1,6 @@
 # Zentra Backend
 
-Express.js API server for Zentra. It is the public API gateway used by the web and mobile clients: it validates requests, calls the FastAPI ML service when available, falls back to precomputed H3 grid scores in Supabase PostgreSQL, and returns crowd predictions, forecasts, heatmaps, recommendations, feedback handling, and admin statistics.
+Express.js API server for Zentra. It is the public API gateway used by the web and mobile clients: it validates requests, calls the FastAPI ML service when available, falls back to precomputed H3 grid scores in Supabase PostgreSQL, and returns crowd predictions, forecasts, heatmaps, and recommendations.
 
 ---
 
@@ -32,7 +32,7 @@ Express Backend API  (this repo, port 3000)
         |----------------> FastAPI ML Service  (zentra-ml, port 8000, optional)
         |
         v
-Supabase PostgreSQL  (h3_grid_scores fallback + request logs + feedback)
+Supabase PostgreSQL  (h3_grid_scores fallback + request logs)
 ```
 
 Clients only ever call the Express API. The backend never exposes Supabase keys or the ML service directly to clients.
@@ -43,8 +43,7 @@ Clients only ever call the Express API. The backend never exposes Supabase keys 
 |-------|---------------|
 | `h3_grid_scores` | Read precomputed H3 crowd scores for fallback predictions, forecasts, heatmaps, and recommendations |
 | `h3_grid_cells` | Read H3 cell centroids for ML-backed heatmap generation |
-| `prediction_requests` | Write a log row for every prediction served; read back for admin statistics |
-| `feedback` | Write user feedback; read back for feedback analytics |
+| `prediction_requests` | Write a log row for every prediction served, for later analysis |
 
 Complex H3 read queries live as PostgreSQL functions in `supabase/migrations/` so route handlers stay small (see [Apply the database functions](#step-3--apply-the-supabase-database-functions)).
 
@@ -65,9 +64,7 @@ backend/
 │   │   ├── predictionRoutes.js     # POST /predictions, /predictions/batch,
 │   │   │                           # GET  /predictions/forecast, POST /predictions/explanation
 │   │   ├── heatmapRoutes.js        # GET  /map/heatmap
-│   │   ├── recommendationRoutes.js # POST /recommendations, /quiet-times, /places
-│   │   ├── feedbackRoutes.js       # POST /feedback
-│   │   └── adminRoutes.js          # GET  /admin/stats/predictions, /admin/stats/feedback
+│   │   └── recommendationRoutes.js # POST /recommendations, /quiet-times, /places
 │   ├── services/
 │   │   └── mlClient.js       # HTTP client for the FastAPI ML service
 │   ├── repositories/         # All SQL access (one file per domain)
@@ -92,7 +89,7 @@ Every prediction-style endpoint follows the same pattern:
 1. **Validate input** — coordinates must be finite numbers inside the Manhattan coverage box (lat `40.679–40.882`, lng `-74.020` to `-73.907`), and time values must parse as date-times. Invalid input returns a `400`/`422` error envelope immediately.
 2. **Try the ML service first** — when `ML_API_BASE_URL` is set, the backend calls the FastAPI service (`POST /predict/crowd` for current/past times, `POST /predict/future` for future times, body `{lat, lon, when}`). ML-backed responses carry `source: "ml_fastapi"` and `cached: false`.
 3. **Fall back to Supabase** — if ML is not configured, times out (`ML_API_TIMEOUT_MS`, default 5000 ms), or errors, the backend reads the nearest precomputed score from `h3_grid_scores`. These responses carry `source: "h3_grid_scores"` and `cached: true`.
-4. **Log the request** — every served prediction writes a row to `prediction_requests`, which feeds `GET /admin/stats/predictions`.
+4. **Log the request** — every served prediction writes a row to `prediction_requests` for later analysis.
 
 This means the backend works without the ML service running — you just get database-fallback predictions instead of live model output.
 
@@ -130,7 +127,7 @@ DATABASE_URL=postgresql://postgres:<YOUR-PASSWORD>@db.<project-ref>.supabase.co:
 ML_API_BASE_URL=http://localhost:8000
 ```
 
-### Step 3 — Apply the Supabase database functions
+### Step 3 —  (Optional) Apply the Supabase database functions
 
 The repository layer calls PostgreSQL functions defined in:
 
@@ -285,22 +282,7 @@ curl -X POST http://localhost:3000/api/v1/predictions/explanation \
   -d '{"lat":40.758,"lng":-73.9855,"targetTime":"2026-07-10T16:30:00-04:00","busynessScore":82,"period":"PM"}'
 ```
 
-### Test 9 — Submit feedback
-
-```bash
-curl -X POST http://localhost:3000/api/v1/feedback \
-  -H "Content-Type: application/json" \
-  -d '{"rating":5,"wasUseful":true,"h3Cell":"892a100d67bffff","comment":"The prediction was useful."}'
-```
-
-### Test 10 — Admin statistics
-
-```bash
-curl "http://localhost:3000/api/v1/admin/stats/predictions"
-curl "http://localhost:3000/api/v1/admin/stats/feedback"
-```
-
-### Test 11 — Validation errors (expected failures)
+### Test 9 — Validation errors (expected failures)
 
 ```bash
 # Outside Manhattan coverage — returns 422 LOCATION_OUT_OF_COVERAGE
@@ -312,11 +294,6 @@ curl -X POST http://localhost:3000/api/v1/predictions \
 curl -X POST http://localhost:3000/api/v1/predictions \
   -H "Content-Type: application/json" \
   -d '{"lat":40.758,"lng":-73.9855}'
-
-# Rating out of range — returns 422 INVALID_RATING
-curl -X POST http://localhost:3000/api/v1/feedback \
-  -H "Content-Type: application/json" \
-  -d '{"rating":9}'
 ```
 
 ---
@@ -334,9 +311,6 @@ curl -X POST http://localhost:3000/api/v1/feedback \
 | `POST` | `/api/v1/recommendations` | Quieter nearby H3 area recommendations |
 | `POST` | `/api/v1/recommendations/quiet-times` | Quieter time recommendations for one coordinate |
 | `POST` | `/api/v1/recommendations/places` | Rank client-provided candidate places by predicted crowd |
-| `POST` | `/api/v1/feedback` | Store user feedback about prediction usefulness |
-| `GET` | `/api/v1/admin/stats/predictions` | Prediction request statistics |
-| `GET` | `/api/v1/admin/stats/feedback` | Feedback analytics |
 
 The full contract, including planned-but-not-yet-implemented endpoints (POI search, itineraries, routes, events, alerts), is in [`docs/api-contract.md`](docs/api-contract.md).
 
@@ -646,93 +620,6 @@ Ranks candidate places the client has already resolved through its own place sea
 }
 ```
 
-### POST /feedback
-
-Stores a user's feedback about how useful a prediction was.
-
-**Request body:** `rating` (integer 1–5) is required; `userId`, `h3Cell`, `wasUseful` (boolean), and `comment` are optional and stored as `null` when omitted.
-
-**Response `201`:** echoes the stored row:
-
-```json
-{
-  "success": true,
-  "data": {
-    "feedback": {
-      "id": "1",
-      "userId": null,
-      "h3Cell": "892a100d67bffff",
-      "rating": 5,
-      "wasUseful": true,
-      "comment": "The prediction was useful.",
-      "createdAt": "2026-07-08T12:00:00.000Z"
-    }
-  },
-  "meta": { "generatedAt": "..." }
-}
-```
-
-A non-integer or out-of-range rating returns `422 INVALID_RATING`.
-
-### GET /admin/stats/predictions
-
-Summarizes the `prediction_requests` log. Optional `startDate` and `endDate` query parameters narrow the range; omitting both covers all time.
-
-**Response `200`:**
-
-```json
-{
-  "success": true,
-  "data": {
-    "totalPredictionRequests": 120,
-    "averageCrowdScore": 72.4,
-    "mlRequests": 90,
-    "cachedRequests": 30,
-    "cacheHitRate": 0.25,
-    "uniqueH3Cells": 42,
-    "mostRequestedH3Cells": [
-      { "h3Cell": "892a100d67bffff", "count": 14, "averageCrowdScore": 85.2 }
-    ]
-  },
-  "meta": { "startDate": null, "endDate": null, "generatedAt": "..." }
-}
-```
-
-`mlRequests` counts requests served by the ML service, `cachedRequests` counts database-fallback requests, and `cacheHitRate` is `cachedRequests / totalPredictionRequests`.
-
-### GET /admin/stats/feedback
-
-Summarizes the `feedback` table over an optional `startDate`/`endDate` range.
-
-**Response `200`:**
-
-```json
-{
-  "success": true,
-  "data": {
-    "totalFeedback": 85,
-    "averageRating": 4.2,
-    "usefulRate": 0.78,
-    "feedbackByH3Cell": [
-      { "h3Cell": "892a100d67bffff", "count": 12, "averageRating": 4.0, "usefulRate": 0.75 }
-    ],
-    "recentComments": [
-      {
-        "id": "12",
-        "h3Cell": "892a100d67bffff",
-        "rating": 5,
-        "wasUseful": true,
-        "comment": "The prediction was useful.",
-        "createdAt": "2026-07-07T12:00:00Z"
-      }
-    ]
-  },
-  "meta": { "startDate": null, "endDate": null, "generatedAt": "..." }
-}
-```
-
-`usefulRate` is the share of feedback rows with `wasUseful: true`; averages are `null` when there is no data in the range.
-
 ---
 
 ## Shared Response Conventions
@@ -792,7 +679,6 @@ Predictions cover Manhattan only. Coordinates outside lat `40.679–40.882` / ln
 | `LOCATION_OUT_OF_COVERAGE` | 422 | Coordinate outside Manhattan coverage |
 | `PREDICTION_UNAVAILABLE` | 503 | No ML or fallback prediction available |
 | `ML_API_UNAVAILABLE` | 503 | ML forced via `source=ml` but the ML service did not respond |
-| `INVALID_RATING` | 422 | Feedback rating must be an integer 1–5 |
 | `INTERNAL_ERROR` | 500 | Unexpected server failure |
 
 In batch-style endpoints (`/predictions/batch`, `/recommendations/places`) these codes also appear inside per-item `warnings` entries without failing the whole request.
