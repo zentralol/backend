@@ -84,7 +84,7 @@ backend/
 
 ## How a Prediction Request Flows
 
-Every prediction-style endpoint follows the same pattern:
+Not every endpoint talks to the ML service. The ML-first flow below applies to `POST /predictions`, `POST /predictions/batch`, and `GET /map/heatmap` (when `source` is `auto` or `ml`):
 
 1. **Validate input** — coordinates must be finite numbers inside the Manhattan coverage box (lat `40.679–40.882`, lng `-74.020` to `-73.907`), and time values must parse as date-times. All times are Manhattan local time (see [Time zones](#time-zones)). Invalid input returns a `400`/`422` error envelope immediately.
 2. **Try the ML service first** — when `ML_API_BASE_URL` is set, the backend calls the FastAPI service (`POST /predict/crowd` for current/past times, `POST /predict/future` for future times, body `{lat, lon, when}`). ML-backed responses carry `source: "ml_fastapi"` and `cached: false`.
@@ -92,6 +92,8 @@ Every prediction-style endpoint follows the same pattern:
 4. **Log the request** — every served prediction writes a row to `prediction_requests` for later analysis.
 
 This means the backend works without the ML service running — you just get database-fallback predictions instead of live model output.
+
+The remaining endpoints never call the ML service, even when it is configured: `GET /predictions/forecast` and all three `/recommendations` endpoints read precomputed scores straight from `h3_grid_scores` in the database, and `POST /predictions/explanation` calls neither the database nor the ML service. Each endpoint's actual data source is listed in the [Endpoint Reference](#endpoint-reference).
 
 ---
 
@@ -303,17 +305,17 @@ curl -X POST http://localhost:3000/api/v1/predictions \
 
 ## Endpoint Reference
 
-| Method | Path | Purpose |
-|--------|------|---------|
-| `GET` | `/api/v1/health` | Service and database health |
-| `POST` | `/api/v1/predictions` | Single coordinate crowd prediction |
-| `POST` | `/api/v1/predictions/batch` | Batch coordinate crowd predictions |
-| `GET` | `/api/v1/predictions/forecast` | Crowd forecast for one coordinate over a time window |
-| `POST` | `/api/v1/predictions/explanation` | Human-readable explanation for a prediction |
-| `GET` | `/api/v1/map/heatmap` | H3 heatmap points for map display |
-| `POST` | `/api/v1/recommendations` | Quieter nearby H3 area recommendations |
-| `POST` | `/api/v1/recommendations/quiet-times` | Quieter time recommendations for one coordinate |
-| `POST` | `/api/v1/recommendations/places` | Rank client-provided candidate places by predicted crowd |
+| Method | Path | Purpose | Talks to |
+|--------|------|---------|----------|
+| `GET` | `/api/v1/health` | Service and database health | Database |
+| `POST` | `/api/v1/predictions` | Single coordinate crowd prediction | ML first → database fallback |
+| `POST` | `/api/v1/predictions/batch` | Batch coordinate crowd predictions | ML first → database fallback (per coordinate) |
+| `GET` | `/api/v1/predictions/forecast` | Crowd forecast for one coordinate over a time window | Database only |
+| `POST` | `/api/v1/predictions/explanation` | Human-readable explanation for a prediction | Neither (in-process) |
+| `GET` | `/api/v1/map/heatmap` | H3 heatmap points for map display | ML per cell or database, by `source` |
+| `POST` | `/api/v1/recommendations` | Quieter nearby H3 area recommendations | Database only |
+| `POST` | `/api/v1/recommendations/quiet-times` | Quieter time recommendations for one coordinate | Database only |
+| `POST` | `/api/v1/recommendations/places` | Rank client-provided candidate places by predicted crowd | Database only |
 
 This README focuses on the functionality that exists in the current code.
 
@@ -321,9 +323,13 @@ This README focuses on the functionality that exists in the current code.
 
 Reports whether the API is up and can reach the database. Returns `200` with `status: "ok"`, `apiVersion`, `database: "connected"`, and the process `uptimeSeconds`. Returns `503` with `DATABASE_UNAVAILABLE` if the database query fails.
 
+**Data source:** database — runs a connection-check query. Does not check the ML service, so a green health check says nothing about ML availability.
+
 ### POST /predictions
 
 Predicts the crowd level for one coordinate at one time.
+
+**Data source:** tries the ML service first when `ML_API_BASE_URL` is configured (`source: "ml_fastapi"`); on ML failure or when unconfigured, reads the nearest precomputed score from `h3_grid_scores` (`source: "h3_grid_scores"`). Every served prediction is also logged to the `prediction_requests` table.
 
 **Request body:**
 
@@ -394,6 +400,8 @@ Errors: `400 INVALID_QUERY` (missing/invalid fields), `422 LOCATION_OUT_OF_COVER
 
 Same prediction logic as above, applied to 1–100 coordinates in one call — useful for scoring a list of place cards at once.
 
+**Data source:** the same ML-first / database-fallback flow as the single endpoint, decided per coordinate — one batch can mix `ml_fastapi` and `h3_grid_scores` results if the ML service fails partway through.
+
 **Request body:** `targetTime` (required), optional `durationMinutes`, and `coordinates`: an array of `{clientId?, lat, lng}` items. `clientId` is echoed back so the client can match results to its own items.
 
 **Response `200`:** `data.predictions` is an array of the same prediction objects as the single endpoint (each with `clientId`), and `data.warnings` collects per-coordinate problems instead of failing the whole request:
@@ -417,7 +425,9 @@ A coordinate that is invalid, out of coverage, or has no data becomes a warning 
 
 ### GET /predictions/forecast
 
-Returns a time series of predicted crowd levels for one coordinate. The backend maps the coordinate to its nearest H3 cell and reads all grid scores for that cell inside the window. This endpoint always reads from the database (no ML call).
+Returns a time series of predicted crowd levels for one coordinate. The backend maps the coordinate to its nearest H3 cell and reads all grid scores for that cell inside the window.
+
+**Data source:** database only — reads precomputed `h3_grid_scores` rows and never calls the ML service, even when it is configured. The forecast is only as fresh and as time-granular as the grid data loaded into the database.
 
 **Query parameters:**
 
@@ -455,7 +465,9 @@ Returns a time series of predicted crowd levels for one coordinate. The backend 
 
 ### POST /predictions/explanation
 
-Turns a score the client already has into display-ready explanation text. This is a pure text-generation endpoint — it does not query the database or ML service, so it responds instantly.
+Turns a score the client already has into display-ready explanation text.
+
+**Data source:** neither — the text is generated in-process from the submitted score and period, with no database query and no ML call, so it responds instantly.
 
 **Request body:** `lat`, `lng`, `targetTime`, and `busynessScore` (0–100) are required; `period` is optional and gets woven into the wording when provided.
 
@@ -484,6 +496,8 @@ The `summary`, `reasons`, and `suggestedAction` texts vary by the busyness level
 ### GET /map/heatmap
 
 Returns crowd scores for many H3 cells at once, for rendering a map heatmap.
+
+**Data source:** decided by the `source` parameter. With `auto` (default) or `ml`, the backend reads cell centroids from `h3_grid_cells` in the database, then calls the ML service **once per cell**; if ML is unconfigured or produces no points, `auto` falls back to precomputed `h3_grid_scores` while `ml` returns `503`. With `database`, the ML service is skipped entirely.
 
 **Query parameters:**
 
@@ -519,11 +533,13 @@ Returns crowd scores for many H3 cells at once, for rendering a map heatmap.
 }
 ```
 
-Database points include `poiTotal` (POI count in the cell); ML points include `crowdCategory` instead. The ML path calls the ML service once per cell, so large `limit` values respond noticeably faster with `source=database`.
+Database points include `poiTotal` (POI count in the cell); ML points include `crowdCategory` instead. Because the ML path makes one call per cell, large `limit` values respond noticeably faster with `source=database`.
 
 ### POST /recommendations
 
 Suggests nearby H3 areas that are predicted to be quieter than the requested coordinate at the requested time.
+
+**Data source:** database only — reads precomputed `h3_grid_scores` through the `zentra_get_quieter_nearby_scores` function; never calls the ML service.
 
 **Request body:** `lat`, `lng`, `targetTime` (required); `limit` optional (default 5, max 20).
 
@@ -545,6 +561,8 @@ Suggests nearby H3 areas that are predicted to be quieter than the requested coo
 ### POST /recommendations/quiet-times
 
 For a single coordinate, compares the crowd score at the chosen `targetTime` against other times in a client-provided window, and returns the quietest alternatives.
+
+**Data source:** database only — the original score and the alternative times all come from precomputed `h3_grid_scores` (the same data the forecast endpoint reads); never calls the ML service.
 
 **Request body:** `lat`, `lng`, `targetTime`, `startTime`, `endTime` (all required); `limit` optional (default 3, max 24).
 
@@ -577,7 +595,9 @@ For a single coordinate, compares the crowd score at the chosen `targetTime` aga
 
 ### POST /recommendations/places
 
-Ranks candidate places the client has already resolved through its own place search or geocoding provider — the backend does not need a POI catalog. Each candidate is scored with the same H3 grid prediction, then sorted by busyness score (ties broken by distance from `currentLocation`).
+Ranks candidate places the client has already resolved through its own place search or geocoding provider — the backend does not need a POI catalog. Each candidate is scored, then sorted by busyness score (ties broken by distance from `currentLocation`).
+
+**Data source:** database only — each candidate is scored from precomputed `h3_grid_scores` (one nearest-score lookup per place); never calls the ML service.
 
 **Request body:**
 
