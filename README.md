@@ -327,7 +327,7 @@ Predicts the crowd level for one coordinate at one time.
 | Field | Type | Required | Notes |
 |-------|------|----------|-------|
 | `lat` / `lng` | float | yes | Must be inside the Manhattan coverage box |
-| `targetTime` | string | yes | Any parseable date-time (ISO 8601 recommended) |
+| `targetTime` | string | yes | ISO 8601 date-time — Manhattan local time with explicit offset recommended, e.g. `2026-07-10T16:30:00-04:00` (see [Time zones](#time-zones)) |
 | `durationMinutes` | int | no | Defaults to 60; accepted range 15–240 |
 
 **Response `200`:**
@@ -373,6 +373,7 @@ Predicts the crowd level for one coordinate at one time.
 | `h3Cell` | string | Uber H3 resolution-9 hex cell ID (~150 m grid) matched to the coordinate |
 | `coordinates` | object | Echo of the requested `lat`/`lng` |
 | `matchedCoordinates` | object | Centroid of the H3 cell the prediction actually comes from |
+| `targetTime` | string | Echo of the requested time, returned as sent — no time-zone conversion is applied |
 | `busynessScore` | int | 0–100 crowd intensity (higher = busier) |
 | `busynessLevel` | string | `very_quiet` / `quiet` / `moderate` / `busy` / `very_busy` (see [thresholds](#busyness-levels)) |
 | `crowdCategory` | string | ML label such as `"Very Busy"` — present only on ML-backed responses |
@@ -420,7 +421,7 @@ Returns a time series of predicted crowd levels for one coordinate. The backend 
 | Name | Required | Default | Notes |
 |------|----------|---------|-------|
 | `lat` / `lng` | yes | — | Coordinate to forecast |
-| `startTime` / `endTime` | yes | — | Window bounds, date-time strings |
+| `startTime` / `endTime` | yes | — | Window bounds, ISO 8601 with explicit offset recommended (see [Time zones](#time-zones)) |
 | `limit` | no | 24 | Max 100 forecast entries |
 
 **Response `200`:**
@@ -435,7 +436,7 @@ Returns a time series of predicted crowd levels for one coordinate. The backend 
     "endTime": "2026-07-11T00:00:00-04:00",
     "forecast": [
       {
-        "timestamp": "2026-07-10T16:30:00-04:00",
+        "timestamp": "2026-07-10T20:30:00.000Z",
         "period": "PM",
         "busynessScore": 82,
         "busynessLevel": "very_busy",
@@ -446,6 +447,8 @@ Returns a time series of predicted crowd levels for one coordinate. The backend 
   "meta": { "count": 1, "generatedAt": "..." }
 }
 ```
+
+`timestamp` values come from PostgreSQL `timestamptz` columns and are serialized in UTC (`Z` suffix); `period` is the Manhattan wall-clock bucket for that instant.
 
 ### POST /predictions/explanation
 
@@ -483,7 +486,7 @@ Returns crowd scores for many H3 cells at once, for rendering a map heatmap.
 
 | Name | Required | Default | Notes |
 |------|----------|---------|-------|
-| `targetTime` | no | current time | Date-time string |
+| `targetTime` | no | current time (UTC) | ISO 8601 with explicit offset recommended (see [Time zones](#time-zones)) |
 | `limit` | no | 100 | Max 524 (the full Manhattan grid) |
 | `source` | no | `auto` | `auto` tries ML then falls back; `ml` forces ML (503 if unavailable); `database` skips ML |
 
@@ -500,7 +503,7 @@ Returns crowd scores for many H3 cells at once, for rendering a map heatmap.
         "h3Cell": "892a1008807ffff",
         "coordinates": { "lat": 40.79523, "lng": -73.97250 },
         "period": "PM",
-        "queryTimestamp": "2026-07-10T16:30:00-04:00",
+        "queryTimestamp": "2026-07-10T20:30:00.000Z",
         "crowdScore": 53,
         "crowdLevel": "moderate",
         "pedestriansPredicted": 3399.1,
@@ -513,7 +516,7 @@ Returns crowd scores for many H3 cells at once, for rendering a map heatmap.
 }
 ```
 
-Database points include `poiTotal` (POI count in the cell); ML points include `crowdCategory` instead. The ML path calls the ML service once per cell, so large `limit` values respond noticeably faster with `source=database`.
+Database points include `poiTotal` (POI count in the cell); ML points include `crowdCategory` instead. `queryTimestamp` is UTC on database points and echoes the request time on ML points. The ML path calls the ML service once per cell, so large `limit` values respond noticeably faster with `source=database`.
 
 ### POST /recommendations
 
@@ -555,7 +558,7 @@ For a single coordinate, compares the crowd score at the chosen `targetTime` aga
     },
     "quietTimes": [
       {
-        "targetTime": "2026-07-10T10:00:00-04:00",
+        "targetTime": "2026-07-10T14:00:00.000Z",
         "busynessScore": 42,
         "busynessLevel": "moderate",
         "confidence": 0.6,
@@ -567,7 +570,7 @@ For a single coordinate, compares the crowd score at the chosen `targetTime` aga
 }
 ```
 
-`quietTimes` is sorted from quietest to busiest and excludes the original `targetTime` itself.
+`quietTimes` is sorted from quietest to busiest and excludes the original `targetTime` itself. The `targetTime` inside each `quietTimes` entry comes from the forecast grid and is a UTC timestamp; the top-level `original.targetTime` echoes what was sent.
 
 ### POST /recommendations/places
 
@@ -602,7 +605,7 @@ Ranks candidate places the client has already resolved through its own place sea
         },
         "prediction": {
           "h3Cell": "892a10089abffff",
-          "targetTime": "2026-07-10T16:30:00-04:00",
+          "targetTime": "2026-07-10T20:30:00.000Z",
           "busynessScore": 44,
           "busynessLevel": "moderate",
           "pedestriansPredicted": 1204.7,
@@ -636,7 +639,7 @@ Every endpoint wraps its payload in the same envelope:
 { "success": false, "error": { "code": "INVALID_QUERY", "message": "..." }, "meta": { "generatedAt": "..." } }
 ```
 
-`meta` also carries endpoint-specific extras such as `count`, `warningCount`, or `modelVersion`.
+`meta` also carries endpoint-specific extras such as `count`, `warningCount`, or `modelVersion`. `meta.generatedAt` is always UTC (ISO 8601 with `Z`).
 
 ### Busyness levels
 
@@ -652,16 +655,34 @@ Scores are normalised to an integer 0–100 (ML scores arriving as 0–1 fractio
 
 ### Periods
 
-`period` values come from the ML grid and bucket the day the same way as the ML service:
+`period` values come from the ML grid and bucket the day the same way as the ML service. The hour ranges refer to **Manhattan local wall-clock time**:
 
-| period | Hours (24h) |
-|--------|-------------|
+| period | Hours (24h, Manhattan local) |
+|--------|------------------------------|
 | `EARLY` | 00:00 – 06:59 |
 | `AM` | 07:00 – 09:59 |
 | `MD` | 10:00 – 13:59 |
 | `PM` | 14:00 – 17:59 |
 | `EVE` | 18:00 – 21:59 |
 | `NIGHT` | 22:00 – 23:59 |
+
+### Time zones
+
+Time fields do not all share one time zone — the quick rule is: **timestamps read from the database come back in UTC, `period` buckets are Manhattan wall-clock, and echoed request times are returned exactly as you sent them.**
+
+| Field | Time zone |
+|-------|-----------|
+| `meta.generatedAt` | UTC, ISO 8601 with `Z` |
+| Forecast `timestamp`, heatmap `queryTimestamp`, quiet-times `quietTimes[].targetTime`, places `prediction.targetTime` (database-backed values) | UTC — stored as PostgreSQL `timestamptz` and serialized with `Z` |
+| `targetTime` / `startTime` / `endTime` echoed at the top level of responses | Returned as sent, no conversion |
+| `period` | Manhattan local wall-clock bucket (see [Periods](#periods)) |
+
+Request times (`targetTime`, `startTime`, `endTime`) are parsed as ISO 8601, and how they are interpreted depends on whether they carry an offset:
+
+- **With an explicit offset** (recommended) — e.g. `2026-07-10T16:30:00-04:00` — the value is an unambiguous absolute instant, which is what the database comparisons and the future-vs-current classification use. Write Manhattan local time with its own offset: `-04:00` while daylight saving is in effect (EDT, roughly March–November), `-05:00` otherwise (EST).
+- **Without an offset** — e.g. `2026-07-10T16:30:00` — the same string is read in the Node server's local time zone on one path and in the database session time zone (UTC on Supabase) on another, so it can resolve to different instants. Avoid this form.
+
+One nuance on the ML path: the ML service derives `period` from the hour digits exactly as written (`16:30` → `PM`) without any time-zone conversion, so the wall-clock part of the time you send should always be Manhattan local time regardless of the offset notation.
 
 ### Coverage area
 
