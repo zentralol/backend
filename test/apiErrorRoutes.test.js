@@ -1,6 +1,8 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
+process.env.NODE_ENV = 'test';
+
 const pool = require('../src/config/database');
 
 function createMockDb(mode = {}) {
@@ -197,11 +199,21 @@ async function withTestServer(mode, fn) {
 }
 
 async function requestJson(baseUrl, path, options = {}) {
+    const {
+        auth = true,
+        headers = {},
+        ...fetchOptions
+    } = options;
+    const authHeaders = auth === false ? {} : {
+        'x-test-user-id': 'user_123'
+    };
+
     const response = await fetch(`${baseUrl}${path}`, {
-        ...options,
+        ...fetchOptions,
         headers: {
             'Content-Type': 'application/json',
-            ...(options.headers || {})
+            ...authHeaders,
+            ...headers
         }
     });
 
@@ -524,4 +536,3 @@ test('GET /admin/stats/feedback validates dates and handles database failures', 
         assert.equal(failing.status, 500);
     });
 });
-

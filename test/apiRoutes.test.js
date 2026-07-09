@@ -1,6 +1,8 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
+process.env.NODE_ENV = 'test';
+
 const pool = require('../src/config/database');
 
 function createMockDb() {
@@ -120,11 +122,11 @@ function createMockDb() {
                 rowCount: 1,
                 rows: [{
                     id: 1,
-                    user_id: 'user_123',
-                    h3_cell: '892a100d67bffff',
-                    rating: 5,
-                    was_useful: true,
-                    comment: 'Useful',
+                    user_id: params[0],
+                    h3_cell: params[1],
+                    rating: params[2],
+                    was_useful: params[3],
+                    comment: params[4],
                     created_at: '2026-07-01T12:00:00Z'
                 }]
             };
@@ -216,11 +218,21 @@ async function withTestServer(fn) {
 }
 
 async function requestJson(baseUrl, path, options = {}) {
+    const {
+        auth = true,
+        headers = {},
+        ...fetchOptions
+    } = options;
+    const authHeaders = auth === false ? {} : {
+        'x-test-user-id': 'user_123'
+    };
+
     const response = await fetch(`${baseUrl}${path}`, {
-        ...options,
+        ...fetchOptions,
         headers: {
             'Content-Type': 'application/json',
-            ...(options.headers || {})
+            ...authHeaders,
+            ...headers
         }
     });
 
@@ -237,6 +249,24 @@ test('GET /health returns database status', async () => {
         assert.equal(response.status, 200);
         assert.equal(response.body.success, true);
         assert.equal(response.body.data.database, 'connected');
+    });
+});
+
+test('protected routes reject requests without authentication', async () => {
+    await withTestServer(async (baseUrl) => {
+        const response = await requestJson(baseUrl, '/api/v1/predictions', {
+            auth: false,
+            method: 'POST',
+            body: JSON.stringify({
+                lat: 40.758,
+                lng: -73.9855,
+                targetTime: '2026-07-01T16:30:00-04:00',
+                durationMinutes: 60
+            })
+        });
+
+        assert.equal(response.status, 401);
+        assert.equal(response.body.error.code, 'UNAUTHORIZED');
     });
 });
 
@@ -473,4 +503,3 @@ test('GET /admin/stats/feedback returns feedback analytics', async () => {
         assert.equal(response.body.data.recentComments[0].comment, 'Useful prediction');
     });
 });
-
