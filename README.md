@@ -7,15 +7,16 @@ Express.js API server for Zentra. It is the public API gateway used by the web a
 ## Table of Contents
 
 1. [Project Overview](#project-overview)
-2. [Project Structure](#project-structure)
-3. [How a Prediction Request Flows](#how-a-prediction-request-flows)
-4. [How to Run Locally](#how-to-run-locally)
-5. [Testing the API](#testing-the-api)
-6. [Endpoint Reference](#endpoint-reference)
-7. [Shared Response Conventions](#shared-response-conventions)
-8. [Error Codes](#error-codes)
-9. [Running Unit Tests](#running-unit-tests)
-10. [Tech Stack](#tech-stack)
+2. [Authentication](#authentication)
+3. [Project Structure](#project-structure)
+4. [How a Prediction Request Flows](#how-a-prediction-request-flows)
+5. [How to Run Locally](#how-to-run-locally)
+6. [Testing the API](#testing-the-api)
+7. [Endpoint Reference](#endpoint-reference)
+8. [Shared Response Conventions](#shared-response-conventions)
+9. [Error Codes](#error-codes)
+10. [Running Unit Tests](#running-unit-tests)
+11. [Tech Stack](#tech-stack)
 
 ---
 
@@ -49,6 +50,29 @@ Complex H3 read queries live as PostgreSQL functions in `supabase/migrations/` s
 
 ---
 
+## Authentication
+
+The crowd prediction API uses Clerk for request authentication. Clients call protected endpoints with a Clerk session token:
+
+```http
+Authorization: Bearer <clerk-session-token>
+```
+
+The backend verifies the token with `@clerk/express` and derives the authenticated user from Clerk. It does not use Supabase Auth for API authentication.
+
+Current auth scope:
+
+| Route group | Authentication |
+|-------------|----------------|
+| `/api/v1/health` | Public |
+| `/api/v1/map/*` | Required |
+| `/api/v1/predictions/*` | Required |
+| `/api/v1/recommendations/*` | Required |
+
+Requests to protected route groups without a valid Clerk session token return `401 UNAUTHORIZED`.
+
+---
+
 ## Project Structure
 
 ```
@@ -59,6 +83,9 @@ backend/
 │   ├── config/
 │   │   ├── database.js       # pg pool from DATABASE_URL
 │   │   └── ml.js             # ML base URL + timeout from env
+│   ├── middleware/
+│   │   ├── auth.js           # JSON 401 guard for protected API routes
+│   │   └── clerkAuth.js      # Clerk middleware setup
 │   ├── routes/
 │   │   ├── healthRoutes.js         # GET  /health
 │   │   ├── predictionRoutes.js     # POST /predictions, /predictions/batch,
@@ -86,10 +113,11 @@ backend/
 
 Not every endpoint talks to the ML service. The ML-first flow below applies to `POST /predictions`, `POST /predictions/batch`, and `GET /map/heatmap` (when `source` is `auto` or `ml`):
 
-1. **Validate input** — coordinates must be finite numbers inside the Manhattan coverage box (lat `40.679–40.882`, lng `-74.020` to `-73.907`), and time values must parse as date-times. All times are Manhattan local time (see [Time zones](#time-zones)). Invalid input returns a `400`/`422` error envelope immediately.
-2. **Try the ML service first** — when `ML_API_BASE_URL` is set, the backend calls the FastAPI service (`POST /predict/crowd` for current/past times, `POST /predict/future` for future times, body `{lat, lon, when}`). ML-backed responses carry `source: "ml_fastapi"` and `cached: false`.
-3. **Fall back to Supabase** — if ML is not configured, times out (`ML_API_TIMEOUT_MS`, default 5000 ms), or errors, the backend reads the nearest precomputed score from `h3_grid_scores`. These responses carry `source: "h3_grid_scores"` and `cached: true`.
-4. **Log the request** — every served prediction writes a row to `prediction_requests` for later analysis.
+1. **Authenticate the request** — protected prediction, map, and recommendation endpoints require a valid Clerk session token in the `Authorization` header.
+2. **Validate input** — coordinates must be finite numbers inside the Manhattan coverage box (lat `40.679–40.882`, lng `-74.020` to `-73.907`), and time values must parse as date-times. All times are Manhattan local time (see [Time zones](#time-zones)). Invalid input returns a `400`/`422` error envelope immediately.
+3. **Try the ML service first** — when `ML_API_BASE_URL` is set, the backend calls the FastAPI service (`POST /predict/crowd` for current/past times, `POST /predict/future` for future times, body `{lat, lon, when}`). ML-backed responses carry `source: "ml_fastapi"` and `cached: false`.
+4. **Fall back to Supabase** — if ML is not configured, times out (`ML_API_TIMEOUT_MS`, default 5000 ms), or errors, the backend reads the nearest precomputed score from `h3_grid_scores`. These responses carry `source: "h3_grid_scores"` and `cached: true`.
+5. **Log the request** — every served prediction writes a row to `prediction_requests` for later analysis.
 
 This means the backend works without the ML service running — you just get database-fallback predictions instead of live model output.
 
@@ -101,8 +129,9 @@ The remaining endpoints never call the ML service, even when it is configured: `
 
 ### Prerequisites
 
-- [Node.js](https://nodejs.org/) 18+ (LTS recommended)
+- [Node.js](https://nodejs.org/) 20.9+ (required by the Clerk backend SDK)
 - Access to the Zentra Supabase project database
+- A Clerk application secret key for protected API routes
 - Optional: the FastAPI ML service running locally (see the `zentra-ml` README)
 
 ### Step 1 — Install dependencies
@@ -119,6 +148,7 @@ Configuration is read from a `.env` file at startup via `dotenv`. This file is n
 |----------|----------|-------------|
 | `PORT` | No | HTTP port. Defaults to `3000`. |
 | `DATABASE_URL` | Yes | Supabase PostgreSQL connection string for `pg`. |
+| `CLERK_SECRET_KEY` | Yes | Clerk secret key used by `@clerk/express` to verify session tokens. |
 | `ML_API_BASE_URL` | No | FastAPI ML service base URL, e.g. `http://localhost:8000`. Leave unset to run on database fallback only. |
 | `ML_API_TIMEOUT_MS` | No | Timeout for each ML request. Defaults to `5000`. |
 | `TZ` | Yes | Set to `America/New_York` so naive time strings are interpreted as Manhattan time (see [Time zones](#time-zones)). Set it in the shell/deployment environment, not in `.env` — Node reads `TZ` at process start. |
@@ -127,6 +157,7 @@ The `DATABASE_URL` comes from Supabase Dashboard → Project Settings → Databa
 
 ```env
 DATABASE_URL=postgresql://postgres:<YOUR-PASSWORD>@db.<project-ref>.supabase.co:5432/postgres
+CLERK_SECRET_KEY=sk_test_...
 ML_API_BASE_URL=http://localhost:8000
 ```
 
@@ -202,13 +233,20 @@ A `503` with code `DATABASE_UNAVAILABLE` means the `DATABASE_URL` is wrong or th
 
 ## Testing the API
 
-All endpoints live under `http://localhost:3000/api/v1`. The examples below cover every implemented endpoint; expected response shapes are in the [Endpoint Reference](#endpoint-reference). All times in the examples are Manhattan local time, written without an offset (see [Time zones](#time-zones)).
+All endpoints live under `http://localhost:3000/api/v1`. The examples below cover every implemented crowd endpoint; expected response shapes are in the [Endpoint Reference](#endpoint-reference). All times in the examples are Manhattan local time, written without an offset (see [Time zones](#time-zones)).
+
+The prediction, map, and recommendation examples require a Clerk session token. Export one from an authenticated client session before running the examples:
+
+```bash
+export ZENTRA_API_TOKEN="<clerk-session-token>"
+```
 
 ### Test 1 — Single prediction at Times Square
 
 ```bash
 curl -X POST http://localhost:3000/api/v1/predictions \
   -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $ZENTRA_API_TOKEN" \
   -d '{"lat":40.758,"lng":-73.9855,"targetTime":"2026-07-10T16:30:00","durationMinutes":60}'
 ```
 
@@ -219,6 +257,7 @@ Check the `source` field in the response: `ml_fastapi` means the ML service answ
 ```bash
 curl -X POST http://localhost:3000/api/v1/predictions/batch \
   -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $ZENTRA_API_TOKEN" \
   -d '{
     "targetTime": "2026-07-10T16:30:00",
     "coordinates": [
@@ -231,13 +270,15 @@ curl -X POST http://localhost:3000/api/v1/predictions/batch \
 ### Test 3 — Forecast over a time window
 
 ```bash
-curl "http://localhost:3000/api/v1/predictions/forecast?lat=40.758&lng=-73.9855&startTime=2026-07-10T00:00:00&endTime=2026-07-11T00:00:00&limit=6"
+curl -H "Authorization: Bearer $ZENTRA_API_TOKEN" \
+  "http://localhost:3000/api/v1/predictions/forecast?lat=40.758&lng=-73.9855&startTime=2026-07-10T00:00:00&endTime=2026-07-11T00:00:00&limit=6"
 ```
 
 ### Test 4 — Heatmap from the database fallback
 
 ```bash
-curl "http://localhost:3000/api/v1/map/heatmap?limit=3&source=database"
+curl -H "Authorization: Bearer $ZENTRA_API_TOKEN" \
+  "http://localhost:3000/api/v1/map/heatmap?limit=3&source=database"
 ```
 
 Use `source=ml` to force the ML path (returns `503` if ML is unavailable), or omit `source` for automatic selection.
@@ -247,6 +288,7 @@ Use `source=ml` to force the ML path (returns `503` if ML is unavailable), or om
 ```bash
 curl -X POST http://localhost:3000/api/v1/recommendations \
   -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $ZENTRA_API_TOKEN" \
   -d '{"lat":40.758,"lng":-73.9855,"targetTime":"2026-07-10T16:30:00","limit":3}'
 ```
 
@@ -255,6 +297,7 @@ curl -X POST http://localhost:3000/api/v1/recommendations \
 ```bash
 curl -X POST http://localhost:3000/api/v1/recommendations/quiet-times \
   -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $ZENTRA_API_TOKEN" \
   -d '{
     "lat": 40.758, "lng": -73.9855,
     "targetTime": "2026-07-10T16:30:00",
@@ -269,6 +312,7 @@ curl -X POST http://localhost:3000/api/v1/recommendations/quiet-times \
 ```bash
 curl -X POST http://localhost:3000/api/v1/recommendations/places \
   -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $ZENTRA_API_TOKEN" \
   -d '{
     "currentLocation": {"lat": 40.758, "lng": -73.9855},
     "targetTime": "2026-07-10T16:30:00",
@@ -284,6 +328,7 @@ curl -X POST http://localhost:3000/api/v1/recommendations/places \
 ```bash
 curl -X POST http://localhost:3000/api/v1/predictions/explanation \
   -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $ZENTRA_API_TOKEN" \
   -d '{"lat":40.758,"lng":-73.9855,"targetTime":"2026-07-10T16:30:00","busynessScore":82,"period":"PM"}'
 ```
 
@@ -293,11 +338,13 @@ curl -X POST http://localhost:3000/api/v1/predictions/explanation \
 # Outside Manhattan coverage — returns 422 LOCATION_OUT_OF_COVERAGE
 curl -X POST http://localhost:3000/api/v1/predictions \
   -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $ZENTRA_API_TOKEN" \
   -d '{"lat":40.6501,"lng":-73.9496,"targetTime":"2026-07-10T16:30:00"}'
 
 # Missing targetTime — returns 400 INVALID_QUERY
 curl -X POST http://localhost:3000/api/v1/predictions \
   -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $ZENTRA_API_TOKEN" \
   -d '{"lat":40.758,"lng":-73.9855}'
 ```
 
@@ -712,6 +759,7 @@ Predictions cover Manhattan only. Coordinates outside lat `40.679–40.882` / ln
 
 | Code | HTTP | Meaning |
 |------|-----:|---------|
+| `UNAUTHORIZED` | 401 | Missing or invalid Clerk session token for a protected endpoint |
 | `DATABASE_UNAVAILABLE` | 503 | Database connection failed |
 | `INVALID_QUERY` | 400/422 | Missing or invalid request fields |
 | `INVALID_COORDINATES` | 422 | Latitude/longitude not valid numbers |
@@ -746,8 +794,9 @@ The suite covers the shared utilities, response formatting, SQL query boundaries
 
 ## Tech Stack
 
-- Runtime: Node.js 18+
+- Runtime: Node.js 20.9+
 - HTTP API: Express 5
+- Authentication: Clerk via `@clerk/express`
 - Database: Supabase-hosted PostgreSQL through `pg`
 - ML integration: FastAPI service (`zentra-ml`) over HTTP with automatic fallback
 - Config: `dotenv`
