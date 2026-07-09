@@ -3,6 +3,8 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 
+process.env.NODE_ENV = 'test';
+
 const app = require('../src/app');
 
 test('Express app loads without starting the HTTP server', () => {

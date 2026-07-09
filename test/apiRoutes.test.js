@@ -1,6 +1,8 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
+process.env.NODE_ENV = 'test';
+
 const pool = require('../src/config/database');
 
 function createMockDb() {
@@ -120,11 +122,11 @@ function createMockDb() {
                 rowCount: 1,
                 rows: [{
                     id: 1,
-                    user_id: 'user_123',
-                    h3_cell: '892a100d67bffff',
-                    rating: 5,
-                    was_useful: true,
-                    comment: 'Useful',
+                    user_id: params[0],
+                    h3_cell: params[1],
+                    rating: params[2],
+                    was_useful: params[3],
+                    comment: params[4],
                     created_at: '2026-07-01T12:00:00Z'
                 }]
             };
@@ -216,11 +218,23 @@ async function withTestServer(fn) {
 }
 
 async function requestJson(baseUrl, path, options = {}) {
+    const {
+        admin = false,
+        auth = true,
+        headers = {},
+        ...fetchOptions
+    } = options;
+    const authHeaders = auth === false ? {} : {
+        'x-test-user-id': admin ? 'admin_123' : 'user_123',
+        ...(admin ? { 'x-test-org-role': 'org:admin' } : {})
+    };
+
     const response = await fetch(`${baseUrl}${path}`, {
-        ...options,
+        ...fetchOptions,
         headers: {
             'Content-Type': 'application/json',
-            ...(options.headers || {})
+            ...authHeaders,
+            ...headers
         }
     });
 
@@ -237,6 +251,24 @@ test('GET /health returns database status', async () => {
         assert.equal(response.status, 200);
         assert.equal(response.body.success, true);
         assert.equal(response.body.data.database, 'connected');
+    });
+});
+
+test('protected routes reject requests without authentication', async () => {
+    await withTestServer(async (baseUrl) => {
+        const response = await requestJson(baseUrl, '/api/v1/predictions', {
+            auth: false,
+            method: 'POST',
+            body: JSON.stringify({
+                lat: 40.758,
+                lng: -73.9855,
+                targetTime: '2026-07-01T16:30:00-04:00',
+                durationMinutes: 60
+            })
+        });
+
+        assert.equal(response.status, 401);
+        assert.equal(response.body.error.code, 'UNAUTHORIZED');
     });
 });
 
@@ -413,11 +445,11 @@ test('POST /recommendations/places ranks frontend candidate places', async () =>
 });
 
 test('POST /feedback stores feedback', async () => {
-    await withTestServer(async (baseUrl) => {
+    await withTestServer(async (baseUrl, calls) => {
         const response = await requestJson(baseUrl, '/api/v1/feedback', {
             method: 'POST',
             body: JSON.stringify({
-                userId: 'user_123',
+                userId: 'spoofed_user',
                 h3Cell: '892a100d67bffff',
                 rating: 5,
                 wasUseful: true,
@@ -426,8 +458,13 @@ test('POST /feedback stores feedback', async () => {
         });
 
         assert.equal(response.status, 201);
+        assert.equal(response.body.data.feedback.userId, 'user_123');
         assert.equal(response.body.data.feedback.rating, 5);
         assert.equal(response.body.data.feedback.wasUseful, true);
+        assert.equal(
+            calls.find((call) => call.sql.includes('INSERT INTO feedback')).params[0],
+            'user_123'
+        );
     });
 });
 
@@ -443,9 +480,18 @@ test('POST /feedback rejects invalid rating', async () => {
     });
 });
 
-test('GET /admin/stats/predictions returns aggregate stats', async () => {
+test('GET /admin/stats/predictions rejects non-admin users', async () => {
     await withTestServer(async (baseUrl) => {
         const response = await requestJson(baseUrl, '/api/v1/admin/stats/predictions');
+
+        assert.equal(response.status, 403);
+        assert.equal(response.body.error.code, 'FORBIDDEN');
+    });
+});
+
+test('GET /admin/stats/predictions returns aggregate stats', async () => {
+    await withTestServer(async (baseUrl) => {
+        const response = await requestJson(baseUrl, '/api/v1/admin/stats/predictions', { admin: true });
 
         assert.equal(response.status, 200);
         assert.equal(response.body.data.totalPredictionRequests, 4);
@@ -456,7 +502,7 @@ test('GET /admin/stats/predictions returns aggregate stats', async () => {
 
 test('GET /admin/stats/predictions rejects invalid dates', async () => {
     await withTestServer(async (baseUrl) => {
-        const response = await requestJson(baseUrl, '/api/v1/admin/stats/predictions?startDate=bad-date');
+        const response = await requestJson(baseUrl, '/api/v1/admin/stats/predictions?startDate=bad-date', { admin: true });
 
         assert.equal(response.status, 400);
         assert.equal(response.body.error.code, 'INVALID_QUERY');
@@ -465,7 +511,7 @@ test('GET /admin/stats/predictions rejects invalid dates', async () => {
 
 test('GET /admin/stats/feedback returns feedback analytics', async () => {
     await withTestServer(async (baseUrl) => {
-        const response = await requestJson(baseUrl, '/api/v1/admin/stats/feedback');
+        const response = await requestJson(baseUrl, '/api/v1/admin/stats/feedback', { admin: true });
 
         assert.equal(response.status, 200);
         assert.equal(response.body.data.totalFeedback, 2);
@@ -473,4 +519,3 @@ test('GET /admin/stats/feedback returns feedback analytics', async () => {
         assert.equal(response.body.data.recentComments[0].comment, 'Useful prediction');
     });
 });
-
