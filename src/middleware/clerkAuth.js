@@ -14,10 +14,7 @@ function testAuthMiddleware(req, _res, next) {
         req.auth = {
             isAuthenticated: true,
             userId,
-            sessionId: req.get('x-test-session-id') || 'sess_test',
-            orgId: req.get('x-test-org-id') || null,
-            orgRole: req.get('x-test-org-role') || null,
-            orgPermissions: csv(req.get('x-test-org-permissions'))
+            sessionId: req.get('x-test-session-id') || 'sess_test'
         };
     }
 

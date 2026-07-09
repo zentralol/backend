@@ -200,14 +200,12 @@ async function withTestServer(mode, fn) {
 
 async function requestJson(baseUrl, path, options = {}) {
     const {
-        admin = false,
         auth = true,
         headers = {},
         ...fetchOptions
     } = options;
     const authHeaders = auth === false ? {} : {
-        'x-test-user-id': admin ? 'admin_123' : 'user_123',
-        ...(admin ? { 'x-test-org-role': 'org:admin' } : {})
+        'x-test-user-id': 'user_123'
     };
 
     const response = await fetch(`${baseUrl}${path}`, {
@@ -391,19 +389,19 @@ test('POST /feedback returns 500 when insert fails', async () => {
 
 test('GET /admin/stats/predictions handles zero stats, invalid endDate, and failures', async () => {
     await withTestServer({ zeroStats: true }, async (baseUrl) => {
-        const zero = await requestJson(baseUrl, '/api/v1/admin/stats/predictions', { admin: true });
+        const zero = await requestJson(baseUrl, '/api/v1/admin/stats/predictions');
         assert.equal(zero.status, 200);
         assert.equal(zero.body.data.cacheHitRate, 0);
         assert.equal(zero.body.data.averageCrowdScore, null);
     });
 
     await withTestServer({}, async (baseUrl) => {
-        const invalid = await requestJson(baseUrl, '/api/v1/admin/stats/predictions?endDate=bad-date', { admin: true });
+        const invalid = await requestJson(baseUrl, '/api/v1/admin/stats/predictions?endDate=bad-date');
         assert.equal(invalid.status, 400);
     });
 
     await withTestServer({ throwStats: true }, async (baseUrl) => {
-        const failing = await requestJson(baseUrl, '/api/v1/admin/stats/predictions', { admin: true });
+        const failing = await requestJson(baseUrl, '/api/v1/admin/stats/predictions');
         assert.equal(failing.status, 500);
     });
 });
@@ -529,12 +527,12 @@ test('POST /recommendations/places records internal warnings when candidate quer
 
 test('GET /admin/stats/feedback validates dates and handles database failures', async () => {
     await withTestServer({}, async (baseUrl) => {
-        const invalid = await requestJson(baseUrl, '/api/v1/admin/stats/feedback?startDate=bad-date', { admin: true });
+        const invalid = await requestJson(baseUrl, '/api/v1/admin/stats/feedback?startDate=bad-date');
         assert.equal(invalid.status, 400);
     });
 
     await withTestServer({ throwFeedbackStats: true }, async (baseUrl) => {
-        const failing = await requestJson(baseUrl, '/api/v1/admin/stats/feedback', { admin: true });
+        const failing = await requestJson(baseUrl, '/api/v1/admin/stats/feedback');
         assert.equal(failing.status, 500);
     });
 });

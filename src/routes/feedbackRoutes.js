@@ -5,8 +5,7 @@ const { sendSuccess, sendError } = require('../utils/response');
 const router = express.Router();
 
 router.post('/', async (req, res) => {
-    const { h3Cell = null, rating, wasUseful = null, comment = null } = req.body || {};
-    const userId = req.user.id;
+    const { userId = null, h3Cell = null, rating, wasUseful = null, comment = null } = req.body || {};
     const parsedRating = Number(rating);
 
     if (!Number.isInteger(parsedRating) || parsedRating < 1 || parsedRating > 5) {

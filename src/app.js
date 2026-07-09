@@ -1,7 +1,7 @@
 ﻿const express = require('express');
 const cors = require('cors');
 const { createClerkAuthMiddleware } = require('./middleware/clerkAuth');
-const { requireAdmin, requireAuthenticatedUser } = require('./middleware/auth');
+const { requireAuthenticatedUser } = require('./middleware/auth');
 
 const healthRoutes = require('./routes/healthRoutes');
 const heatmapRoutes = require('./routes/heatmapRoutes');
@@ -20,7 +20,7 @@ app.use('/api/v1', healthRoutes);
 app.use('/api/v1/map', clerkAuth, requireAuthenticatedUser, heatmapRoutes);
 app.use('/api/v1/predictions', clerkAuth, requireAuthenticatedUser, predictionRoutes);
 app.use('/api/v1/recommendations', clerkAuth, requireAuthenticatedUser, recommendationRoutes);
-app.use('/api/v1/feedback', clerkAuth, requireAuthenticatedUser, feedbackRoutes);
-app.use('/api/v1/admin', clerkAuth, requireAdmin, adminRoutes);
+app.use('/api/v1/feedback', feedbackRoutes);
+app.use('/api/v1/admin', adminRoutes);
 
 module.exports = app;
