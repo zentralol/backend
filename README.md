@@ -131,7 +131,7 @@ The remaining endpoints never call the ML service, even when it is configured: `
 
 - [Node.js](https://nodejs.org/) 20.9+ (required by the Clerk backend SDK)
 - Access to the Zentra Supabase project database
-- A Clerk application secret key for protected API routes
+- Clerk publishable and secret keys for protected API routes
 - Optional: the FastAPI ML service running locally (see the `zentra-ml` README)
 
 ### Step 1 — Install dependencies
@@ -148,6 +148,7 @@ Configuration is read from a `.env` file at startup via `dotenv`. This file is n
 |----------|----------|-------------|
 | `PORT` | No | HTTP port. Defaults to `3000`. |
 | `DATABASE_URL` | Yes | Supabase PostgreSQL connection string for `pg`. |
+| `CLERK_PUBLISHABLE_KEY` | Yes | Clerk publishable key used by `@clerk/express` to identify the Clerk instance. |
 | `CLERK_SECRET_KEY` | Yes | Clerk secret key used by `@clerk/express` to verify session tokens. |
 | `ML_API_BASE_URL` | No | FastAPI ML service base URL, e.g. `http://localhost:8000`. Leave unset to run on database fallback only. |
 | `ML_API_TIMEOUT_MS` | No | Timeout for each ML request. Defaults to `5000`. |
@@ -157,6 +158,7 @@ The `DATABASE_URL` comes from Supabase Dashboard → Project Settings → Databa
 
 ```env
 DATABASE_URL=postgresql://postgres:<YOUR-PASSWORD>@db.<project-ref>.supabase.co:5432/postgres
+CLERK_PUBLISHABLE_KEY=pk_test_...
 CLERK_SECRET_KEY=sk_test_...
 ML_API_BASE_URL=http://localhost:8000
 ```
