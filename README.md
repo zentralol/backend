@@ -67,19 +67,32 @@ Current auth scope:
 | Route group | Authentication |
 |-------------|----------------|
 | `/api/v1/health` | Public |
-| `/api/v1/map/*` | Clerk session token required |
-| `/api/v1/predictions/*` | Clerk session token required |
-| `/api/v1/recommendations/*` | Clerk session token required |
-| `/api/v1/chat/*` | Clerk session token **or** internal service token (see below) |
+| `/api/v1/map/*` | Clerk session token **or** internal service token (see below) |
+| `/api/v1/predictions/*` | Clerk session token **or** internal service token |
+| `/api/v1/recommendations/*` | Clerk session token **or** internal service token |
+| `/api/v1/chat/*` | Clerk session token only |
 
-Requests to Clerk-protected route groups without a valid session token return `401 UNAUTHORIZED`.
+Requests without valid credentials return `401 UNAUTHORIZED`.
 
 ### AI chat authentication (`/api/v1/chat/*`)
 
-The chat gateway accepts **either**:
+Chat is the **public user entry point** for web and iOS. It accepts **only** a Clerk session:
 
-1. **End-user (web / iOS):** `Authorization: Bearer <clerk-session-token>`. The gateway resolves `user_id` from the verified Clerk session and **ignores** any `userId` in the request body (prevents spoofing).
-2. **Trusted internal caller:** `X-Internal-Service-Token: <AGENT_INTERNAL_TOKEN>` plus a body `userId` (or `user_id`) identifying the user being acted on. Missing `userId` returns `400 INVALID_QUERY`; a wrong token returns `401 UNAUTHORIZED`.
+```http
+Authorization: Bearer <clerk-session-token>
+```
+
+The gateway resolves `user_id` from the verified Clerk session (`req.user.id`) and forwards it to the agent. Any `userId` in the request body is **not** used. `X-Internal-Service-Token` is **not** checked on `/chat/*` — only Clerk authentication applies.
+
+### Internal service authentication (capability endpoints)
+
+`/api/v1/map/*`, `/api/v1/predictions/*`, and `/api/v1/recommendations/*` accept **either** a Clerk session (browser/mobile) **or** a trusted server-to-server caller:
+
+```http
+X-Internal-Service-Token: <AGENT_INTERNAL_TOKEN>
+```
+
+This lets the AI agent call crowd-prediction and recommendation APIs as tools without a user session. A valid token is sufficient on its own — no `userId` in the body is required. A wrong or missing token when the header is present returns `401 UNAUTHORIZED`; requests with no token fall through to the normal Clerk check.
 
 ---
 
@@ -95,9 +108,9 @@ backend/
 │   │   ├── ml.js             # ML base URL + timeout from env
 │   │   └── agent.js          # zentra-agent base URL, timeout, internal token
 │   ├── middleware/
-│   │   ├── auth.js           # JSON 401 guard for protected API routes
+│   │   ├── auth.js           # JSON 401 guard for Clerk-protected routes
 │   │   ├── clerkAuth.js      # Clerk middleware setup
-│   │   └── gatewayAuth.js    # Clerk or internal-service auth for /chat
+│   │   └── serviceAuth.js    # Clerk or internal-service auth for capability routes
 │   ├── routes/
 │   │   ├── healthRoutes.js         # GET  /health
 │   │   ├── predictionRoutes.js     # POST /predictions, /predictions/batch,
@@ -168,10 +181,10 @@ Configuration is read from a `.env` file at startup via `dotenv`. This file is n
 | `ML_API_TIMEOUT_MS` | No | Timeout for each ML request. Defaults to `5000`. |
 | `AGENT_API_BASE_URL` | No | zentra-agent base URL, e.g. `http://localhost:8010`. When unset, `POST /chat/stream` returns `503 AGENT_UNAVAILABLE`. |
 | `AGENT_API_TIMEOUT_MS` | No | Timeout for the initial connection to the agent before the SSE stream starts. Defaults to `30000`. |
-| `AGENT_INTERNAL_TOKEN` | No* | Shared secret sent to the agent as `X-Internal-Service-Token`. Must match the agent's `AGENT_INTERNAL_TOKEN`. Required when the agent enforces inbound auth. |
+| `AGENT_INTERNAL_TOKEN` | No* | Shared secret. The gateway sends it to the agent as `X-Internal-Service-Token`. The agent sends the same value when calling map/prediction/recommendation endpoints. Must match on both services. |
 | `TZ` | Yes | Set to `America/New_York` so naive time strings are interpreted as Manhattan time (see [Time zones](#time-zones)). Set it in the shell/deployment environment, not in `.env` — Node reads `TZ` at process start. |
 
-\* Required for production chat when the agent has `AGENT_INTERNAL_TOKEN` configured.
+\* Required when the agent enforces inbound auth and when the agent calls capability endpoints server-to-server.
 
 The `DATABASE_URL` comes from Supabase Dashboard → Project Settings → Database → Connection string (URI format):
 
@@ -785,13 +798,13 @@ Optional: `Accept: text/event-stream`
 | `lat` | number | no | Device latitude, `-90` to `90`. Omitted → forwarded as `null` |
 | `lng` | number | no | Device longitude, `-180` to `180`. Pair with `lat` for location-aware tools |
 
-Clients must **not** send `userId` for Clerk-authenticated calls — the gateway injects it. Internal service callers must send `userId` in the body instead of a Clerk token.
+Clients must **not** send `userId` — the gateway injects `user_id` from the Clerk session.
 
 **Gateway → agent mapping** (snake_case, internal only):
 
 ```json
 {
-  "user_id": "<from Clerk session or internal body userId>",
+  "user_id": "<from verified Clerk session>",
   "message": "Recommend one quiet spot near me.",
   "client_type": "web",
   "conversation_id": "conv-1",
@@ -908,8 +921,8 @@ These use the standard JSON error envelope:
 
 | Code | HTTP | When |
 |------|-----:|------|
-| `UNAUTHORIZED` | 401 | Missing/invalid Clerk token or wrong internal service token |
-| `INVALID_QUERY` | 400 | Missing `message`, invalid `clientType`, out-of-range `lat`/`lng`, or internal call without `userId` |
+| `UNAUTHORIZED` | 401 | Missing or invalid Clerk session token |
+| `INVALID_QUERY` | 400 | Missing `message`, invalid `clientType`, or out-of-range `lat`/`lng` |
 | `AGENT_UNAVAILABLE` | 503 | `AGENT_API_BASE_URL` not configured |
 | `AGENT_TIMEOUT` | 504 | Agent did not start streaming within `AGENT_API_TIMEOUT_MS` |
 | `AGENT_ERROR` | 502 | Agent unreachable or returned a non-2xx status |
