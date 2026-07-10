@@ -2,6 +2,7 @@
 const cors = require('cors');
 const { createClerkAuthMiddleware } = require('./middleware/clerkAuth');
 const { requireAuthenticatedUser } = require('./middleware/auth');
+const gatewayAuth = require('./middleware/gatewayAuth');
 const { requestLogger } = require('./middleware/requestLogger');
 
 const healthRoutes = require('./routes/healthRoutes');
@@ -10,6 +11,7 @@ const predictionRoutes = require('./routes/predictionRoutes');
 const recommendationRoutes = require('./routes/recommendationRoutes');
 const feedbackRoutes = require('./routes/feedbackRoutes');
 const adminRoutes = require('./routes/adminRoutes');
+const chatRoutes = require('./routes/chatRoutes');
 
 const app = express();
 const clerkAuth = createClerkAuthMiddleware();
@@ -25,5 +27,6 @@ app.use('/api/v1/predictions', requireAuthenticatedUser, predictionRoutes);
 app.use('/api/v1/recommendations', requireAuthenticatedUser, recommendationRoutes);
 app.use('/api/v1/feedback', feedbackRoutes);
 app.use('/api/v1/admin', adminRoutes);
+app.use('/api/v1/chat', gatewayAuth, chatRoutes);
 
 module.exports = app;
