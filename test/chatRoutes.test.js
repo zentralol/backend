@@ -113,33 +113,10 @@ test('chat stream ignores a spoofed body userId when authenticated via Clerk', a
     });
 });
 
-test('chat stream accepts a valid internal service token and uses body userId', async () => {
-    await withChatServers(async (baseUrl, received) => {
-        const res = await post(baseUrl, '/api/v1/chat/stream', {
-            headers: { 'X-Internal-Service-Token': SERVICE_TOKEN },
-            body: { message: 'hi', userId: 'user_abc' }
-        });
-
-        assert.equal(res.status, 200);
-        assert.equal(received.body.user_id, 'user_abc');
-    });
-});
-
-test('chat stream requires a body userId for internal service calls', async () => {
+test('chat stream does not accept the internal service token (Clerk only)', async () => {
     await withChatServers(async (baseUrl) => {
         const res = await post(baseUrl, '/api/v1/chat/stream', {
             headers: { 'X-Internal-Service-Token': SERVICE_TOKEN },
-            body: { message: 'hi' }
-        });
-
-        assert.equal(res.status, 400);
-    });
-});
-
-test('chat stream rejects an incorrect internal service token', async () => {
-    await withChatServers(async (baseUrl) => {
-        const res = await post(baseUrl, '/api/v1/chat/stream', {
-            headers: { 'X-Internal-Service-Token': 'wrong' },
             body: { message: 'hi', userId: 'user_abc' }
         });
 

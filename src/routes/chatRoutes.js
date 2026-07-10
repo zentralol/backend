@@ -84,10 +84,10 @@ router.post('/stream', async (req, res) => {
         return sendError(res, 503, 'AGENT_UNAVAILABLE', 'The AI agent service is not configured');
     }
 
-    // user_id is resolved from verified auth context (Clerk or trusted internal
-    // caller) by gatewayAuth — never taken from the model or an untrusted field.
+    // user_id is resolved from the verified Clerk session by
+    // requireAuthenticatedUser — never taken from the model or an untrusted field.
     const forwardBody = JSON.stringify({
-        user_id: req.gatewayPrincipal.userId,
+        user_id: req.user.id,
         message: value.message,
         client_type: value.clientType,
         conversation_id: value.conversationId,

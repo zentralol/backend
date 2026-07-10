@@ -2,7 +2,7 @@
 const cors = require('cors');
 const { createClerkAuthMiddleware } = require('./middleware/clerkAuth');
 const { requireAuthenticatedUser } = require('./middleware/auth');
-const gatewayAuth = require('./middleware/gatewayAuth');
+const { serviceOrUserAuth } = require('./middleware/serviceAuth');
 const { requestLogger } = require('./middleware/requestLogger');
 
 const healthRoutes = require('./routes/healthRoutes');
@@ -21,12 +21,15 @@ app.use(clerkAuth);
 app.use(express.json());
 app.use(requestLogger);
 
+// Capability endpoints accept either a Clerk user (browser) or the internal
+// service token (the AI agent calling server-to-server).
 app.use('/api/v1', healthRoutes);
-app.use('/api/v1/map', requireAuthenticatedUser, heatmapRoutes);
-app.use('/api/v1/predictions', requireAuthenticatedUser, predictionRoutes);
-app.use('/api/v1/recommendations', requireAuthenticatedUser, recommendationRoutes);
+app.use('/api/v1/map', serviceOrUserAuth, heatmapRoutes);
+app.use('/api/v1/predictions', serviceOrUserAuth, predictionRoutes);
+app.use('/api/v1/recommendations', serviceOrUserAuth, recommendationRoutes);
 app.use('/api/v1/feedback', feedbackRoutes);
 app.use('/api/v1/admin', adminRoutes);
-app.use('/api/v1/chat', gatewayAuth, chatRoutes);
+// Chat is the public user entry point: Clerk session only, never the service token.
+app.use('/api/v1/chat', requireAuthenticatedUser, chatRoutes);
 
 module.exports = app;
