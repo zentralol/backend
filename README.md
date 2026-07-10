@@ -70,6 +70,8 @@ Current auth scope:
 | `/api/v1/map/*` | Clerk session token **or** internal service token (see below) |
 | `/api/v1/predictions/*` | Clerk session token **or** internal service token |
 | `/api/v1/recommendations/*` | Clerk session token **or** internal service token |
+| `/api/v1/itinerary/*` | Clerk session token **or** internal service token |
+| `/api/v1/recommend` | Clerk session token **or** internal service token |
 | `/api/v1/chat/*` | Clerk session token only |
 
 Requests without valid credentials return `401 UNAUTHORIZED`.
@@ -86,7 +88,7 @@ The gateway resolves `user_id` from the verified Clerk session (`req.user.id`) a
 
 ### Internal service authentication (capability endpoints)
 
-`/api/v1/map/*`, `/api/v1/predictions/*`, and `/api/v1/recommendations/*` accept **either** a Clerk session (browser/mobile) **or** a trusted server-to-server caller:
+`/api/v1/map/*`, `/api/v1/predictions/*`, `/api/v1/recommendations/*`, `/api/v1/itinerary/*`, and `/api/v1/recommend` accept **either** a Clerk session (browser/mobile) **or** a trusted server-to-server caller:
 
 ```http
 X-Internal-Service-Token: <AGENT_INTERNAL_TOKEN>
@@ -106,7 +108,8 @@ backend/
 │   ├── config/
 │   │   ├── database.js       # pg pool from DATABASE_URL
 │   │   ├── ml.js             # ML base URL + timeout from env
-│   │   └── agent.js          # zentra-agent base URL, timeout, internal token
+│   │   ├── agent.js          # zentra-agent base URL, timeout, internal token
+│   │   └── recommend.js      # zentra-recommend base URL + timeout
 │   ├── middleware/
 │   │   ├── auth.js           # JSON 401 guard for Clerk-protected routes
 │   │   ├── clerkAuth.js      # Clerk middleware setup
@@ -117,9 +120,12 @@ backend/
 │   │   │                           # GET  /predictions/forecast, POST /predictions/explanation
 │   │   ├── heatmapRoutes.js        # GET  /map/heatmap
 │   │   ├── recommendationRoutes.js # POST /recommendations, /quiet-times, /places
+│   │   ├── itineraryRoutes.js      # POST /itinerary/plan (proxy to zentra-recommend)
+│   │   ├── placeRecommendRoutes.js   # POST /recommend (proxy to zentra-recommend)
 │   │   └── chatRoutes.js           # POST /chat/stream (SSE passthrough to agent)
 │   ├── services/
-│   │   └── mlClient.js       # HTTP client for the FastAPI ML service
+│   │   ├── mlClient.js       # HTTP client for the FastAPI ML service
+│   │   └── recommendClient.js # HTTP proxy for zentra-recommend
 │   ├── repositories/         # All SQL access (one file per domain)
 │   │   └── sql/              # Raw query strings
 │   └── utils/
@@ -182,6 +188,8 @@ Configuration is read from a `.env` file at startup via `dotenv`. This file is n
 | `AGENT_API_BASE_URL` | No | zentra-agent base URL, e.g. `http://localhost:8010`. When unset, `POST /chat/stream` returns `503 AGENT_UNAVAILABLE`. |
 | `AGENT_API_TIMEOUT_MS` | No | Timeout for the initial connection to the agent before the SSE stream starts. Defaults to `30000`. |
 | `AGENT_INTERNAL_TOKEN` | No* | Shared secret. The gateway sends it to the agent as `X-Internal-Service-Token`. The agent sends the same value when calling map/prediction/recommendation endpoints. Must match on both services. |
+| `RECOMMEND_API_BASE_URL` | No | zentra-recommend base URL, e.g. `http://localhost:8001`. When unset, `POST /itinerary/plan` and `POST /recommend` return `503 RECOMMEND_UNAVAILABLE`. |
+| `RECOMMEND_API_TIMEOUT_MS` | No | Timeout for zentra-recommend proxy calls. Defaults to `60000`. |
 | `TZ` | Yes | Set to `America/New_York` so naive time strings are interpreted as Manhattan time (see [Time zones](#time-zones)). Set it in the shell/deployment environment, not in `.env` — Node reads `TZ` at process start. |
 
 \* Required when the agent enforces inbound auth and when the agent calls capability endpoints server-to-server.
@@ -195,6 +203,7 @@ CLERK_SECRET_KEY=sk_test_...
 ML_API_BASE_URL=http://localhost:8000
 AGENT_API_BASE_URL=http://localhost:8010
 AGENT_INTERNAL_TOKEN=<same value as zentra-agent .env>
+RECOMMEND_API_BASE_URL=http://localhost:8001
 ```
 
 ### Step 3 —  (Optional) Apply the Supabase database functions
@@ -240,6 +249,19 @@ uv run uvicorn app.main:app --reload --port 8010
 Set `AGENT_API_BASE_URL=http://localhost:8010` and matching `AGENT_INTERNAL_TOKEN` in both the backend and agent `.env` files. See the `zentra-agent` README for LLM and Supabase configuration.
 
 Skipping this step is fine for crowd endpoints — only `POST /chat/stream` needs the agent.
+
+### Step 4c — (Optional) Start the zentra-recommend service
+
+To exercise AI itinerary planning and place recommendations, start the FastAPI service from the `zentra-recommend-itinerary-agent` repo:
+
+```bash
+cd ../zentra-recommend-itinerary-agent/api
+uvicorn main:app --reload --port 8001
+```
+
+Set `RECOMMEND_API_BASE_URL=http://localhost:8001` in the backend `.env` file. See the `zentra-recommend-itinerary-agent` README for LLM configuration.
+
+Skipping this step is fine for crowd endpoints — only `POST /itinerary/plan` and `POST /recommend` need zentra-recommend.
 
 ### Step 5 — Start the server
 
@@ -417,6 +439,45 @@ curl -N -X POST http://localhost:3000/api/v1/chat/stream \
 
 The response is `200` with `Content-Type: text/event-stream`, not the JSON success envelope. Each line is a standard SSE `data:` frame containing one JSON event. A successful turn ends with a `done` event; see [POST /chat/stream](#post-chatstream) for the full event contract.
 
+### Test 11 — AI itinerary plan
+
+Requires `zentra-recommend-itinerary-agent` running and `RECOMMEND_API_BASE_URL` configured.
+
+```bash
+curl -X POST http://localhost:3000/api/v1/itinerary/plan \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $ZENTRA_API_TOKEN" \
+  -d '{
+    "inline_profile": {
+      "interests": ["art", "parks"],
+      "budget": "moderate",
+      "pace": "moderate"
+    },
+    "anchor_place": "Central Park",
+    "anchor_time": "2026-07-10T10:00:00",
+    "duration_hours": 8
+  }'
+```
+
+The response is the upstream zentra-recommend JSON (not the standard `{ success, data }` envelope).
+
+### Test 12 — AI place recommendations
+
+Requires `zentra-recommend-itinerary-agent` running and `RECOMMEND_API_BASE_URL` configured.
+
+```bash
+curl -X POST http://localhost:3000/api/v1/recommend \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $ZENTRA_API_TOKEN" \
+  -d '{
+    "inline_profile": { "interests": ["art"] },
+    "query": "quiet museums",
+    "count": 6
+  }'
+```
+
+The response is the upstream zentra-recommend JSON (not the standard `{ success, data }` envelope).
+
 ---
 
 ## Endpoint Reference
@@ -432,6 +493,8 @@ The response is `200` with `Content-Type: text/event-stream`, not the JSON succe
 | `POST` | `/api/v1/recommendations` | Quieter nearby H3 area recommendations | Database only |
 | `POST` | `/api/v1/recommendations/quiet-times` | Quieter time recommendations for one coordinate | Database only |
 | `POST` | `/api/v1/recommendations/places` | Rank client-provided candidate places by predicted crowd | Database only |
+| `POST` | `/api/v1/itinerary/plan` | Personalised Manhattan day itinerary | zentra-recommend |
+| `POST` | `/api/v1/recommend` | Personalised place cards with images and crowd levels | zentra-recommend |
 | `POST` | `/api/v1/chat/stream` | AI assistant streaming chat (SSE) | zentra-agent |
 
 This README focuses on the functionality that exists in the current code.
@@ -763,6 +826,48 @@ Ranks candidate places the client has already resolved through its own place sea
 }
 ```
 
+### POST /itinerary/plan
+
+Proxies to zentra-recommend to build a personalised Manhattan day itinerary. Accepts either `inline_profile` (from the AI agent) or `user_id` (direct API).
+
+**Data source:** zentra-recommend only — the gateway forwards the request body and returns the upstream JSON unchanged.
+
+**Request body:**
+
+| Field | Type | Required | Notes |
+|-------|------|----------|-------|
+| `inline_profile` | object | one of | User preferences inline (agent path) |
+| `user_id` | string | one of | File-based profile id (direct API path) |
+| `anchor_place` | string | yes | Starting place name, e.g. `Central Park` |
+| `anchor_time` | string | yes | ISO 8601 date-time in New York local time |
+| `duration_hours` | int | no | Default 8 |
+| `additional_context` | string | no | Extra constraints, e.g. stroller, anniversary |
+
+**Response:** upstream zentra-recommend JSON with `stops`, `greeting`, `travel_tips`, etc. FastAPI validation errors (`422`) and not-found errors (`404`) are passed through as-is.
+
+**Gateway errors:** `503 RECOMMEND_UNAVAILABLE`, `504 RECOMMEND_TIMEOUT`, `502 RECOMMEND_ERROR`.
+
+### POST /recommend
+
+Proxies to zentra-recommend for personalised place cards with images, descriptions, and crowd levels.
+
+**Data source:** zentra-recommend only — the gateway forwards the request body and returns the upstream JSON unchanged.
+
+**Request body:**
+
+| Field | Type | Required | Notes |
+|-------|------|----------|-------|
+| `inline_profile` | object | no | User preferences inline |
+| `user_id` | string | no | File-based profile id |
+| `query` | string | no | Free-text search, e.g. `quiet museums` |
+| `category` | string | no | `park`, `museum`, `food`, etc. |
+| `budget` | string | no | `free`, `budget`, `moderate`, `luxury` |
+| `count` | int | no | Default 6, max 12 |
+
+**Response:** upstream zentra-recommend JSON with `recommendations` and `based_on`. Errors are passed through as-is.
+
+**Gateway errors:** `503 RECOMMEND_UNAVAILABLE`, `504 RECOMMEND_TIMEOUT`, `502 RECOMMEND_ERROR`.
+
 ### POST /chat/stream
 
 Streams one AI assistant turn as **Server-Sent Events (SSE)**. The gateway validates the public JSON body, resolves the authenticated user, forwards the request to `zentra-agent` (`POST /api/v1/agent/stream`), and **passthrough-streams** the agent's SSE frames to the client unchanged.
@@ -1005,6 +1110,9 @@ Predictions cover Manhattan only. Coordinates outside lat `40.679–40.882` / ln
 | `AGENT_UNAVAILABLE` | 503 | AI agent not configured (`AGENT_API_BASE_URL` unset) |
 | `AGENT_TIMEOUT` | 504 | AI agent did not start streaming in time |
 | `AGENT_ERROR` | 502 | AI agent unreachable or returned an error status |
+| `RECOMMEND_UNAVAILABLE` | 503 | zentra-recommend not configured (`RECOMMEND_API_BASE_URL` unset) |
+| `RECOMMEND_TIMEOUT` | 504 | zentra-recommend did not respond in time |
+| `RECOMMEND_ERROR` | 502 | zentra-recommend unreachable |
 | `AGENT_STREAM_INTERRUPTED` | SSE | Gateway lost the agent stream mid-response (in-stream `error` event, not HTTP) |
 | `INTERNAL_ERROR` | 500 | Unexpected server failure |
 
