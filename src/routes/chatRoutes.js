@@ -6,6 +6,18 @@ const router = express.Router();
 
 const VALID_CLIENT_TYPES = new Set(['web', 'ios']);
 
+// Optional device coordinate: absent -> null; present must be a finite number
+// within [min, max], otherwise invalid.
+function parseOptionalCoordinate(raw, min, max) {
+    if (raw === undefined || raw === null) {
+        return { value: null };
+    }
+    if (typeof raw !== 'number' || !Number.isFinite(raw) || raw < min || raw > max) {
+        return { invalid: true };
+    }
+    return { value: raw };
+}
+
 function validateChatInput(body) {
     const message = body?.message;
     if (typeof message !== 'string' || message.trim().length === 0) {
@@ -17,12 +29,24 @@ function validateChatInput(body) {
         return { error: { status: 400, code: 'INVALID_QUERY', message: 'clientType must be one of: web, ios' } };
     }
 
+    const lat = parseOptionalCoordinate(body?.lat, -90, 90);
+    if (lat.invalid) {
+        return { error: { status: 400, code: 'INVALID_QUERY', message: 'lat must be a number between -90 and 90' } };
+    }
+
+    const lng = parseOptionalCoordinate(body?.lng, -180, 180);
+    if (lng.invalid) {
+        return { error: { status: 400, code: 'INVALID_QUERY', message: 'lng must be a number between -180 and 180' } };
+    }
+
     return {
         value: {
             message: message.trim(),
             clientType,
             conversationId: typeof body?.conversationId === 'string' ? body.conversationId : null,
-            requestId: typeof body?.requestId === 'string' ? body.requestId : null
+            requestId: typeof body?.requestId === 'string' ? body.requestId : null,
+            lat: lat.value,
+            lng: lng.value
         }
     };
 }
@@ -67,7 +91,9 @@ router.post('/stream', async (req, res) => {
         message: value.message,
         client_type: value.clientType,
         conversation_id: value.conversationId,
-        request_id: value.requestId
+        request_id: value.requestId,
+        lat: value.lat,
+        lng: value.lng
     });
 
     const controller = new AbortController();

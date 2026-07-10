@@ -171,3 +171,40 @@ test('chat stream returns 503 when the agent base url is not configured', async 
         { configureAgent: false }
     );
 });
+
+test('chat stream forwards device coordinates to the agent', async () => {
+    await withChatServers(async (baseUrl, received) => {
+        const res = await post(baseUrl, '/api/v1/chat/stream', {
+            headers: { 'x-test-user-id': 'user_123' },
+            body: { message: 'nearby?', lat: 40.758, lng: -73.9855 }
+        });
+
+        assert.equal(res.status, 200);
+        assert.equal(received.body.lat, 40.758);
+        assert.equal(received.body.lng, -73.9855);
+    });
+});
+
+test('chat stream sends null coordinates when none are provided', async () => {
+    await withChatServers(async (baseUrl, received) => {
+        const res = await post(baseUrl, '/api/v1/chat/stream', {
+            headers: { 'x-test-user-id': 'user_123' },
+            body: { message: 'hi' }
+        });
+
+        assert.equal(res.status, 200);
+        assert.equal(received.body.lat, null);
+        assert.equal(received.body.lng, null);
+    });
+});
+
+test('chat stream rejects out-of-range coordinates', async () => {
+    await withChatServers(async (baseUrl) => {
+        const res = await post(baseUrl, '/api/v1/chat/stream', {
+            headers: { 'x-test-user-id': 'user_123' },
+            body: { message: 'hi', lat: 200, lng: 0 }
+        });
+
+        assert.equal(res.status, 400);
+    });
+});
