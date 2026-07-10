@@ -2,6 +2,7 @@
 const cors = require('cors');
 const { createClerkAuthMiddleware } = require('./middleware/clerkAuth');
 const { requireAuthenticatedUser } = require('./middleware/auth');
+const { requestLogger } = require('./middleware/requestLogger');
 
 const healthRoutes = require('./routes/healthRoutes');
 const heatmapRoutes = require('./routes/heatmapRoutes');
@@ -16,6 +17,7 @@ const clerkAuth = createClerkAuthMiddleware();
 app.use(cors());
 app.use(clerkAuth);
 app.use(express.json());
+app.use(requestLogger);
 
 app.use('/api/v1', healthRoutes);
 app.use('/api/v1/map', requireAuthenticatedUser, heatmapRoutes);
