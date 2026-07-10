@@ -1,6 +1,6 @@
 # Zentra Backend
 
-Express.js API server for Zentra. It is the public API gateway used by the web and mobile clients: it validates requests, calls the FastAPI ML service when available, falls back to precomputed H3 grid scores in Supabase PostgreSQL, and returns crowd predictions, forecasts, heatmaps, and recommendations.
+Express.js API server for Zentra. It is the public API gateway used by the web and mobile clients: it validates requests, calls the FastAPI ML service when available, falls back to precomputed H3 grid scores in Supabase PostgreSQL, returns crowd predictions, forecasts, heatmaps, and recommendations, and proxies AI assistant chat as Server-Sent Events (SSE) to the internal `zentra-agent` service.
 
 ---
 
@@ -22,7 +22,7 @@ Express.js API server for Zentra. It is the public API gateway used by the web a
 
 ## Project Overview
 
-The backend sits between the clients and the two data sources:
+The backend sits between the clients and the downstream services:
 
 ```
 Web Frontend / Mobile App
@@ -30,13 +30,15 @@ Web Frontend / Mobile App
         v
 Express Backend API  (this repo, port 3000)
         |
-        |----------------> FastAPI ML Service  (zentra-ml, port 8000, optional)
+        |----------------> FastAPI ML Service       (zentra-ml, port 8000, optional)
+        |
+        |----------------> FastAPI Agent Service    (zentra-agent, port 8010, AI chat SSE)
         |
         v
 Supabase PostgreSQL  (h3_grid_scores fallback + request logs)
 ```
 
-Clients only ever call the Express API. The backend never exposes Supabase keys or the ML service directly to clients.
+Clients only ever call the Express API. The backend never exposes Supabase keys, the ML service, or the agent service directly to clients. The agent is an internal microservice; web and iOS reach it only through `POST /api/v1/chat/stream`.
 
 **What Supabase is used for** (PostgreSQL only, accessed through the `pg` driver):
 
@@ -52,7 +54,7 @@ Complex H3 read queries live as PostgreSQL functions in `supabase/migrations/` s
 
 ## Authentication
 
-The crowd prediction API uses Clerk for request authentication. Clients call protected endpoints with a Clerk session token:
+Most protected endpoints use Clerk for request authentication. Clients call them with a Clerk session token:
 
 ```http
 Authorization: Bearer <clerk-session-token>
@@ -65,11 +67,19 @@ Current auth scope:
 | Route group | Authentication |
 |-------------|----------------|
 | `/api/v1/health` | Public |
-| `/api/v1/map/*` | Required |
-| `/api/v1/predictions/*` | Required |
-| `/api/v1/recommendations/*` | Required |
+| `/api/v1/map/*` | Clerk session token required |
+| `/api/v1/predictions/*` | Clerk session token required |
+| `/api/v1/recommendations/*` | Clerk session token required |
+| `/api/v1/chat/*` | Clerk session token **or** internal service token (see below) |
 
-Requests to protected route groups without a valid Clerk session token return `401 UNAUTHORIZED`.
+Requests to Clerk-protected route groups without a valid session token return `401 UNAUTHORIZED`.
+
+### AI chat authentication (`/api/v1/chat/*`)
+
+The chat gateway accepts **either**:
+
+1. **End-user (web / iOS):** `Authorization: Bearer <clerk-session-token>`. The gateway resolves `user_id` from the verified Clerk session and **ignores** any `userId` in the request body (prevents spoofing).
+2. **Trusted internal caller:** `X-Internal-Service-Token: <AGENT_INTERNAL_TOKEN>` plus a body `userId` (or `user_id`) identifying the user being acted on. Missing `userId` returns `400 INVALID_QUERY`; a wrong token returns `401 UNAUTHORIZED`.
 
 ---
 
@@ -82,16 +92,19 @@ backend/
 │   ├── app.js                # Express app: middleware + route mounting
 │   ├── config/
 │   │   ├── database.js       # pg pool from DATABASE_URL
-│   │   └── ml.js             # ML base URL + timeout from env
+│   │   ├── ml.js             # ML base URL + timeout from env
+│   │   └── agent.js          # zentra-agent base URL, timeout, internal token
 │   ├── middleware/
 │   │   ├── auth.js           # JSON 401 guard for protected API routes
-│   │   └── clerkAuth.js      # Clerk middleware setup
+│   │   ├── clerkAuth.js      # Clerk middleware setup
+│   │   └── gatewayAuth.js    # Clerk or internal-service auth for /chat
 │   ├── routes/
 │   │   ├── healthRoutes.js         # GET  /health
 │   │   ├── predictionRoutes.js     # POST /predictions, /predictions/batch,
 │   │   │                           # GET  /predictions/forecast, POST /predictions/explanation
 │   │   ├── heatmapRoutes.js        # GET  /map/heatmap
-│   │   └── recommendationRoutes.js # POST /recommendations, /quiet-times, /places
+│   │   ├── recommendationRoutes.js # POST /recommendations, /quiet-times, /places
+│   │   └── chatRoutes.js           # POST /chat/stream (SSE passthrough to agent)
 │   ├── services/
 │   │   └── mlClient.js       # HTTP client for the FastAPI ML service
 │   ├── repositories/         # All SQL access (one file per domain)
@@ -133,6 +146,7 @@ The remaining endpoints never call the ML service, even when it is configured: `
 - Access to the Zentra Supabase project database
 - Clerk publishable and secret keys for protected API routes
 - Optional: the FastAPI ML service running locally (see the `zentra-ml` README)
+- Optional: the FastAPI agent service running locally (see the `zentra-agent` README) for AI chat
 
 ### Step 1 — Install dependencies
 
@@ -152,7 +166,12 @@ Configuration is read from a `.env` file at startup via `dotenv`. This file is n
 | `CLERK_SECRET_KEY` | Yes | Clerk secret key used by `@clerk/express` to verify session tokens. |
 | `ML_API_BASE_URL` | No | FastAPI ML service base URL, e.g. `http://localhost:8000`. Leave unset to run on database fallback only. |
 | `ML_API_TIMEOUT_MS` | No | Timeout for each ML request. Defaults to `5000`. |
+| `AGENT_API_BASE_URL` | No | zentra-agent base URL, e.g. `http://localhost:8010`. When unset, `POST /chat/stream` returns `503 AGENT_UNAVAILABLE`. |
+| `AGENT_API_TIMEOUT_MS` | No | Timeout for the initial connection to the agent before the SSE stream starts. Defaults to `30000`. |
+| `AGENT_INTERNAL_TOKEN` | No* | Shared secret sent to the agent as `X-Internal-Service-Token`. Must match the agent's `AGENT_INTERNAL_TOKEN`. Required when the agent enforces inbound auth. |
 | `TZ` | Yes | Set to `America/New_York` so naive time strings are interpreted as Manhattan time (see [Time zones](#time-zones)). Set it in the shell/deployment environment, not in `.env` — Node reads `TZ` at process start. |
+
+\* Required for production chat when the agent has `AGENT_INTERNAL_TOKEN` configured.
 
 The `DATABASE_URL` comes from Supabase Dashboard → Project Settings → Database → Connection string (URI format):
 
@@ -161,6 +180,8 @@ DATABASE_URL=postgresql://postgres:<YOUR-PASSWORD>@db.<project-ref>.supabase.co:
 CLERK_PUBLISHABLE_KEY=pk_test_...
 CLERK_SECRET_KEY=sk_test_...
 ML_API_BASE_URL=http://localhost:8000
+AGENT_API_BASE_URL=http://localhost:8010
+AGENT_INTERNAL_TOKEN=<same value as zentra-agent .env>
 ```
 
 ### Step 3 —  (Optional) Apply the Supabase database functions
@@ -193,6 +214,19 @@ TZ=America/New_York uvicorn main:app --reload --port 8000
 The `TZ` variable makes the ML service interpret naive time strings as Manhattan time, matching the API-wide convention (see [Time zones](#time-zones)).
 
 Skipping this step is fine — every endpoint still works from the Supabase fallback.
+
+### Step 4b — (Optional) Start the AI agent service
+
+To exercise AI chat, start the FastAPI agent from the `zentra-agent` repo in another terminal:
+
+```bash
+cd ../zentra-agent
+uv run uvicorn app.main:app --reload --port 8010
+```
+
+Set `AGENT_API_BASE_URL=http://localhost:8010` and matching `AGENT_INTERNAL_TOKEN` in both the backend and agent `.env` files. See the `zentra-agent` README for LLM and Supabase configuration.
+
+Skipping this step is fine for crowd endpoints — only `POST /chat/stream` needs the agent.
 
 ### Step 5 — Start the server
 
@@ -235,9 +269,9 @@ A `503` with code `DATABASE_UNAVAILABLE` means the `DATABASE_URL` is wrong or th
 
 ## Testing the API
 
-All endpoints live under `http://localhost:3000/api/v1`. The examples below cover every implemented crowd endpoint; expected response shapes are in the [Endpoint Reference](#endpoint-reference). All times in the examples are Manhattan local time, written without an offset (see [Time zones](#time-zones)).
+All endpoints live under `http://localhost:3000/api/v1`. The examples below cover every implemented crowd endpoint plus AI chat; expected response shapes are in the [Endpoint Reference](#endpoint-reference). All times in the crowd examples are Manhattan local time, written without an offset (see [Time zones](#time-zones)).
 
-The prediction, map, and recommendation examples require a Clerk session token. Export one from an authenticated client session before running the examples:
+The prediction, map, recommendation, and chat examples require a Clerk session token. Export one from an authenticated client session before running the examples:
 
 ```bash
 export ZENTRA_API_TOKEN="<clerk-session-token>"
@@ -350,6 +384,26 @@ curl -X POST http://localhost:3000/api/v1/predictions \
   -d '{"lat":40.758,"lng":-73.9855}'
 ```
 
+### Test 10 — AI assistant chat (SSE)
+
+Requires `zentra-agent` running and `AGENT_API_BASE_URL` configured. Use `curl -N` so SSE frames appear live (without buffering).
+
+```bash
+curl -N -X POST http://localhost:3000/api/v1/chat/stream \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $ZENTRA_API_TOKEN" \
+  -d '{
+    "message": "Recommend one quiet spot near me.",
+    "clientType": "web",
+    "conversationId": "conv-1",
+    "requestId": "req-1",
+    "lat": 40.758,
+    "lng": -73.9855
+  }'
+```
+
+The response is `200` with `Content-Type: text/event-stream`, not the JSON success envelope. Each line is a standard SSE `data:` frame containing one JSON event. A successful turn ends with a `done` event; see [POST /chat/stream](#post-chatstream) for the full event contract.
+
 ---
 
 ## Endpoint Reference
@@ -365,6 +419,7 @@ curl -X POST http://localhost:3000/api/v1/predictions \
 | `POST` | `/api/v1/recommendations` | Quieter nearby H3 area recommendations | Database only |
 | `POST` | `/api/v1/recommendations/quiet-times` | Quieter time recommendations for one coordinate | Database only |
 | `POST` | `/api/v1/recommendations/places` | Rank client-provided candidate places by predicted crowd | Database only |
+| `POST` | `/api/v1/chat/stream` | AI assistant streaming chat (SSE) | zentra-agent |
 
 This README focuses on the functionality that exists in the current code.
 
@@ -695,13 +750,177 @@ Ranks candidate places the client has already resolved through its own place sea
 }
 ```
 
+### POST /chat/stream
+
+Streams one AI assistant turn as **Server-Sent Events (SSE)**. The gateway validates the public JSON body, resolves the authenticated user, forwards the request to `zentra-agent` (`POST /api/v1/agent/stream`), and **passthrough-streams** the agent's SSE frames to the client unchanged.
+
+**Data source:** zentra-agent only. The gateway does not call the ML service or Supabase for chat; the agent may call its own tools (user preferences, nearby attractions, etc.) server-side.
+
+#### Differences from JSON endpoints
+
+| Aspect | JSON endpoints | `POST /chat/stream` |
+|--------|----------------|---------------------|
+| Success `Content-Type` | `application/json` | `text/event-stream` |
+| Success body | `{ success, data, meta }` envelope | SSE `data: <json>\n\n` frames |
+| Pre-stream errors | JSON error envelope | JSON error envelope (same as other endpoints) |
+| In-stream failures | N/A | Terminal SSE `error` event (HTTP stays `200`) |
+
+**Request headers:**
+
+```http
+Content-Type: application/json
+Authorization: Bearer <clerk-session-token>
+```
+
+Optional: `Accept: text/event-stream`
+
+#### Request body (public camelCase)
+
+| Field | Type | Required | Notes |
+|-------|------|----------|-------|
+| `message` | string | yes | User message; trimmed text must be non-empty |
+| `clientType` | string | no | `web` (default) or `ios` |
+| `conversationId` | string | no | Continue an existing conversation; echoed in the terminal `done` event as `conversation_id` |
+| `requestId` | string | no | Client correlation id for tracing |
+| `lat` | number | no | Device latitude, `-90` to `90`. Omitted → forwarded as `null` |
+| `lng` | number | no | Device longitude, `-180` to `180`. Pair with `lat` for location-aware tools |
+
+Clients must **not** send `userId` for Clerk-authenticated calls — the gateway injects it. Internal service callers must send `userId` in the body instead of a Clerk token.
+
+**Gateway → agent mapping** (snake_case, internal only):
+
+```json
+{
+  "user_id": "<from Clerk session or internal body userId>",
+  "message": "Recommend one quiet spot near me.",
+  "client_type": "web",
+  "conversation_id": "conv-1",
+  "request_id": "req-1",
+  "lat": 40.758,
+  "lng": -73.9855
+}
+```
+
+#### SSE wire format
+
+Each event is one SSE message:
+
+```text
+data: {"type":"message_delta","text":"Hello","sequence":1}
+
+```
+
+Rules:
+
+- One JSON object per `data:` line, followed by a blank line (`\n\n`).
+- Every event includes `type` and a monotonic `sequence` (starting at `1`), assigned by the agent.
+- Optional on any event: `metadata` (diagnostics / UI hints; clients may ignore).
+- Parse by buffering on `\n\n`, then `JSON.parse` each `data:` payload after the `data: ` prefix.
+- The stream ends when the connection closes after a terminal `done` or `error` event.
+
+#### SSE event types
+
+Switch on `type`. Unknown optional fields should be ignored.
+
+| `type` | Role | Fields |
+|--------|------|--------|
+| `message_delta` | Assistant text chunk to append | `text` (string) |
+| `tool_started` | A tool invocation began | `tool_name` (string), `tool_call_id` (string, optional) |
+| `tool_finished` | A tool invocation completed | `tool_name`, `tool_call_id` (optional), `result` (ToolResponse) |
+| `backend_capability_result` | Reserved for backend capability results | `capability` (string), `result` (ToolResponse) |
+| `warning` | Non-fatal warning | `message` (string) |
+| `done` | **Successful stream end** | `conversation_id` (string, optional), `usage` (object, optional) |
+| `error` | **Failed stream end** | `code` (string), `message` (string) |
+
+**`tool_finished.result` (ToolResponse):**
+
+| Field | Type | Notes |
+|-------|------|-------|
+| `status` | string | `success`, `warning`, or `error` |
+| `summary` | string | One-line human-readable summary |
+| `data` | object | Tool-specific payload (default `{}`) |
+| `next_actions` | string[] | Suggested follow-ups (default `[]`) |
+| `artifacts` | string[] | Trace ids / artifact references (default `[]`) |
+
+Known tools and `data` shapes (from `zentra-agent`):
+
+- `get_user_preferences` → `data.preferences` with fields such as `travel_pace`, `crowd_tolerance`, `budget_range`, `interests`, `mobility_needs`, `dietary_needs`, `inclusion_needs`, `onboarding_completed`.
+- `get_nearest_attractions` → `data.attractions[]` with `name`, `category`, `neighborhood`, `description`, `distance_km`. Without device location the tool returns `status: "warning"` and asks the model to request location.
+
+#### Typical event sequences
+
+**Simple text reply** (no tools) — verified against a live agent response:
+
+```text
+data: {"sequence":1,"type":"message_delta","text":"Hi"}
+
+data: {"sequence":2,"type":"message_delta","text":" there!"}
+
+data: {"sequence":3,"type":"message_delta","text":" How can I help you with your travels today?"}
+
+data: {"sequence":4,"type":"done","conversation_id":"conv-1","usage":{"input_tokens":464,"output_tokens":28,"total_tokens":492}}
+```
+
+(`message_delta` events may be split into many small chunks depending on the LLM provider.)
+
+**Tool call** (preferences lookup) — verified against a live agent response:
+
+```text
+data: {"sequence":1,"type":"message_delta","text":"Sure — let me check your saved preferences first"}
+
+data: {"sequence":2,"type":"tool_started","tool_name":"get_user_preferences"}
+
+data: {"sequence":3,"type":"tool_finished","tool_name":"get_user_preferences","tool_call_id":"call_e88d630f8ed64972aa8eef7a","result":{"status":"success","summary":"No stored user preferences were found.","data":{"preferences":{},"source":"supabase"},"next_actions":[],"artifacts":[]}}
+
+data: {"sequence":4,"type":"message_delta","text":"It looks like you don't have any saved preferences yet"}
+
+data: {"sequence":5,"type":"done","conversation_id":"conv-1"}
+```
+
+**LLM not configured** (agent fallback when `LLM_API_KEY` is unset):
+
+```text
+data: {"sequence":1,"type":"warning","message":"LLM is not configured; using a placeholder reply."}
+
+data: {"sequence":2,"type":"message_delta","text":"The language model is not configured, "}
+
+data: {"sequence":3,"type":"message_delta","text":"so this is a deterministic placeholder response. "}
+
+data: {"sequence":4,"type":"message_delta","text":"Set LLM_API_KEY to enable real conversations."}
+
+data: {"sequence":5,"type":"done","conversation_id":"conv-1"}
+```
+
+#### In-stream error events
+
+Returned as SSE with HTTP `200`. The client should treat `error` as the terminal event.
+
+| `code` | Meaning |
+|--------|---------|
+| `CONVERSATION_NOT_FOUND` | `conversationId` does not belong to the authenticated user |
+| `TOOL_STEP_LIMIT_REACHED` | Agent exceeded the bounded tool-step limit |
+| `LLM_ERROR` | Model generation failed |
+| `AGENT_STREAM_INTERRUPTED` | Gateway lost the upstream stream mid-response (injected by the gateway only) |
+
+#### HTTP errors (before the stream starts)
+
+These use the standard JSON error envelope:
+
+| Code | HTTP | When |
+|------|-----:|------|
+| `UNAUTHORIZED` | 401 | Missing/invalid Clerk token or wrong internal service token |
+| `INVALID_QUERY` | 400 | Missing `message`, invalid `clientType`, out-of-range `lat`/`lng`, or internal call without `userId` |
+| `AGENT_UNAVAILABLE` | 503 | `AGENT_API_BASE_URL` not configured |
+| `AGENT_TIMEOUT` | 504 | Agent did not start streaming within `AGENT_API_TIMEOUT_MS` |
+| `AGENT_ERROR` | 502 | Agent unreachable or returned a non-2xx status |
+
 ---
 
 ## Shared Response Conventions
 
 ### Response envelope
 
-Every endpoint wraps its payload in the same envelope:
+JSON endpoints wrap their payload in the same envelope:
 
 ```json
 // success
@@ -712,6 +931,8 @@ Every endpoint wraps its payload in the same envelope:
 ```
 
 `meta` also carries endpoint-specific extras such as `count`, `warningCount`, or `modelVersion`. `meta.generatedAt` is always UTC (ISO 8601 with `Z`).
+
+**Exception:** `POST /chat/stream` does **not** use this envelope on success. A successful chat response is raw SSE (`text/event-stream`). Only pre-stream validation and upstream connection failures return the JSON error envelope above.
 
 ### Busyness levels
 
@@ -768,6 +989,10 @@ Predictions cover Manhattan only. Coordinates outside lat `40.679–40.882` / ln
 | `LOCATION_OUT_OF_COVERAGE` | 422 | Coordinate outside Manhattan coverage |
 | `PREDICTION_UNAVAILABLE` | 503 | No ML or fallback prediction available |
 | `ML_API_UNAVAILABLE` | 503 | ML forced via `source=ml` but the ML service did not respond |
+| `AGENT_UNAVAILABLE` | 503 | AI agent not configured (`AGENT_API_BASE_URL` unset) |
+| `AGENT_TIMEOUT` | 504 | AI agent did not start streaming in time |
+| `AGENT_ERROR` | 502 | AI agent unreachable or returned an error status |
+| `AGENT_STREAM_INTERRUPTED` | SSE | Gateway lost the agent stream mid-response (in-stream `error` event, not HTTP) |
 | `INTERNAL_ERROR` | 500 | Unexpected server failure |
 
 In batch-style endpoints (`/predictions/batch`, `/recommendations/places`) these codes also appear inside per-item `warnings` entries without failing the whole request.
@@ -790,7 +1015,7 @@ npm run test:coverage
 
 On Windows PowerShell, if `npm` is blocked by script execution policy, use `npm.cmd test` / `npm.cmd run test:coverage` instead.
 
-The suite covers the shared utilities, response formatting, SQL query boundaries, app structure, ML client behavior, and API route behavior with a mocked Supabase pool — so it runs without a real database or ML service.
+The suite covers the shared utilities, response formatting, SQL query boundaries, app structure, ML client behavior, chat gateway forwarding, and API route behavior with a mocked Supabase pool — so it runs without a real database, ML service, or agent.
 
 ---
 
@@ -801,4 +1026,5 @@ The suite covers the shared utilities, response formatting, SQL query boundaries
 - Authentication: Clerk via `@clerk/express`
 - Database: Supabase-hosted PostgreSQL through `pg`
 - ML integration: FastAPI service (`zentra-ml`) over HTTP with automatic fallback
+- AI integration: FastAPI agent service (`zentra-agent`) over HTTP SSE passthrough
 - Config: `dotenv`
