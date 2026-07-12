@@ -183,6 +183,57 @@ test('skips the run when the ML service is not configured', async () => {
     assert.equal(attractionsFetched, false);
 });
 
+test('logs the start and finish of every run', async () => {
+    // Arrange
+    const logs = [];
+    const { deps } = buildDeps({
+        logger: { ...silentLogger, log: (...args) => logs.push(args.join(' ')) }
+    });
+    const job = createCrowdPredictionJob(deps);
+
+    // Act
+    await job.run();
+
+    // Assert
+    assert.ok(
+        logs.some((line) => line.includes('Crowd Prediction Job started')),
+        `expected a start log, got: ${JSON.stringify(logs)}`
+    );
+    assert.ok(
+        logs.some((line) => line.includes('Crowd Prediction Job finished')),
+        `expected a finish log, got: ${JSON.stringify(logs)}`
+    );
+});
+
+test('logs a warning when a tick is skipped because a run is in progress', async () => {
+    // Arrange
+    let release;
+    const gate = new Promise((resolve) => {
+        release = resolve;
+    });
+    const warnings = [];
+    const { deps } = buildDeps({
+        callMlPrediction: async () => {
+            await gate;
+            return { crowd_score: 10 };
+        },
+        logger: { ...silentLogger, warn: (...args) => warnings.push(args.join(' ')) }
+    });
+    const job = createCrowdPredictionJob(deps);
+
+    // Act
+    const firstRun = job.run();
+    await job.run();
+    release();
+    await firstRun;
+
+    // Assert
+    assert.ok(
+        warnings.some((line) => line.includes('previous run still in progress')),
+        `expected a skip warning, got: ${JSON.stringify(warnings)}`
+    );
+});
+
 test('rejects re-entrant runs while a run is in progress', async () => {
     // Arrange
     let release;
