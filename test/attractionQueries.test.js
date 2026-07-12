@@ -22,9 +22,10 @@ test('attraction prediction upsert is parameterized', () => {
     assert.doesNotMatch(UPSERT_ATTRACTION_PREDICTION, /\$9/);
 });
 
-test('attraction prediction upsert targets the hourly unique key', () => {
+test('attraction prediction upsert targets the five-minute unique key', () => {
     assert.match(UPSERT_ATTRACTION_PREDICTION, /ON CONFLICT \(attraction_id, predicted_for\)/);
-    assert.match(UPSERT_ATTRACTION_PREDICTION, /date_trunc\('hour'/);
+    assert.match(UPSERT_ATTRACTION_PREDICTION, /extract\(epoch from \$2::timestamptz\)/i);
+    assert.match(UPSERT_ATTRACTION_PREDICTION, /\/ 300\)/);
 });
 
 test('attraction prediction upsert refreshes updated_at on conflict', () => {

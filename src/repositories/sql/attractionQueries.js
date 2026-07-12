@@ -7,14 +7,15 @@ const SELECT_ATTRACTIONS_FOR_PREDICTION = `
     ORDER BY id
 `;
 
-// One row per attraction per target hour: predicted_for is truncated to the
-// hour so repeated runs within the hour refresh the same row.
+// One row per attraction per five-minute target bucket. The epoch-based
+// truncation is explicit because date_trunc('minute') alone would not create
+// five-minute buckets.
 const UPSERT_ATTRACTION_PREDICTION = `
     INSERT INTO attraction_predictions
         (attraction_id, predicted_for, crowd_score, crowd_level,
          crowd_category, pedestrians_pred, h3_cell, source)
     VALUES
-        ($1, date_trunc('hour', $2::timestamptz), $3, $4, $5, $6, $7, $8)
+        ($1, to_timestamp(floor(extract(epoch from $2::timestamptz) / 300) * 300), $3, $4, $5, $6, $7, $8)
     ON CONFLICT (attraction_id, predicted_for)
     DO UPDATE SET
         crowd_score = EXCLUDED.crowd_score,

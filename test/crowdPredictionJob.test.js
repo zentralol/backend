@@ -70,7 +70,7 @@ test('normalizes the ML score and derives the crowd level', async () => {
     assert.equal(upserts[0].source, 'ml');
 });
 
-test('uses one shared hour-truncated predictedFor timestamp for the whole run', async () => {
+test('uses one shared New York five-minute predictedFor timestamp for the whole run', async () => {
     // Arrange
     const mlCalls = [];
     const { deps, upserts } = buildDeps({
@@ -84,8 +84,9 @@ test('uses one shared hour-truncated predictedFor timestamp for the whole run', 
     // Act
     const summary = await job.run();
 
-    // Assert: 10:23:45 truncates to the 10:00 bucket, matching the DB key
-    assert.equal(summary.predictedFor, '2026-07-12T10:00:00.000Z');
+    // Assert: 10:23:45Z is 06:23:45 in New York during daylight time, so it
+    // truncates to the 06:20 local bucket with the correct offset.
+    assert.equal(summary.predictedFor, '2026-07-12T06:20:00-04:00');
     assert.deepEqual(mlCalls, [summary.predictedFor, summary.predictedFor]);
     assert.deepEqual(
         upserts.map((u) => u.predictedFor),
