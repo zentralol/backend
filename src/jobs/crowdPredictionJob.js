@@ -6,12 +6,34 @@ const { normalizeScore, busynessLevel } = require('../utils/busyness');
 
 const MAX_LOGGED_FAILURES = 5;
 const PREDICTION_SOURCE = 'ml';
-const HOUR_MS = 3600000;
+const NEW_YORK_TIME_ZONE = 'America/New_York';
+const FIVE_MINUTES = 5;
 
-// The DB key is date_trunc('hour', predicted_for), so the JS side reports
-// the same hourly bucket instead of a raw timestamp that never matches a row.
-function truncateToHourIso(date) {
-    return new Date(Math.floor(date.getTime() / HOUR_MS) * HOUR_MS).toISOString();
+const NEW_YORK_PARTS_FORMATTER = new Intl.DateTimeFormat('en-US', {
+    timeZone: NEW_YORK_TIME_ZONE,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hourCycle: 'h23',
+    timeZoneName: 'longOffset'
+});
+
+// Build a five-minute wall-clock bucket in New York and keep its offset in the
+// value sent to ML/Postgres. This makes the model use New York's local hour
+// while preserving the correct instant for the timestamptz database column.
+function truncateToFiveMinutesNewYorkIso(date) {
+    const parts = Object.fromEntries(
+        NEW_YORK_PARTS_FORMATTER.formatToParts(date)
+            .filter(({ type }) => type !== 'literal')
+            .map(({ type, value }) => [type, value])
+    );
+    const minute = Math.floor(Number(parts.minute) / FIVE_MINUTES) * FIVE_MINUTES;
+    const offset = parts.timeZoneName === 'GMT' ? '+00:00' : parts.timeZoneName.replace('GMT', '');
+
+    return `${parts.year}-${parts.month}-${parts.day}T${parts.hour}:${String(minute).padStart(2, '0')}:00${offset}`;
 }
 
 function buildPredictionRow(attraction, predictedFor, mlResult) {
@@ -71,11 +93,11 @@ function createCrowdPredictionJob(deps = {}) {
         const startedAt = Date.now();
 
         try {
-            // One hour-truncated timestamp for the whole run: every
-            // attraction lands in the same hourly bucket (matching the DB
-            // key) and the past-or-present value makes mlClient route to
+            // One New York five-minute timestamp for the whole run: every
+            // attraction lands in the same five-minute bucket (matching the
+            // DB key) and the past-or-present value makes mlClient route to
             // /predict/crowd.
-            const predictedFor = truncateToHourIso(now());
+            const predictedFor = truncateToFiveMinutesNewYorkIso(now());
             logger.log(`Crowd Prediction Job started (predictedFor=${predictedFor})`);
             const { rows } = await getAttractionsForPrediction();
 
