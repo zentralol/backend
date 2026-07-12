@@ -57,7 +57,10 @@ function createCrowdPredictionJob(deps = {}) {
     }
 
     async function run() {
-        if (running) return { alreadyRunning: true };
+        if (running) {
+            logger.warn('Crowd Prediction Job tick skipped: previous run still in progress');
+            return { alreadyRunning: true };
+        }
 
         if (!isMlConfigured()) {
             logger.warn('Crowd Prediction Job skipped: ML service is not configured');
@@ -73,6 +76,7 @@ function createCrowdPredictionJob(deps = {}) {
             // key) and the past-or-present value makes mlClient route to
             // /predict/crowd.
             const predictedFor = truncateToHourIso(now());
+            logger.log(`Crowd Prediction Job started (predictedFor=${predictedFor})`);
             const { rows } = await getAttractionsForPrediction();
 
             const results = await mapWithConcurrency(rows, concurrency(), (attraction) =>

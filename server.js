@@ -1,5 +1,9 @@
 ﻿require('dotenv').config();
 
+const { installConsoleTimestamps } = require('./src/utils/consoleTimestamps');
+
+installConsoleTimestamps();
+
 const app = require('./src/app');
 const { startCrowdPredictionScheduler } = require('./src/jobs/scheduler');
 
