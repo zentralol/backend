@@ -1,8 +1,6 @@
 const express = require('express');
 const {
-    getNearestPredictionScore,
-    getNearestH3Cell,
-    getForecastScores
+    getNearestPredictionScore
 } = require('../repositories/h3Repository');
 const { savePredictionRequest } = require('../repositories/predictionRequestRepository');
 const { callMlPrediction } = require('../services/mlClient');
@@ -82,6 +80,62 @@ function buildExplanation(score, period) {
         ...details[level],
         disclaimer: 'This is a model prediction, not a live crowd count.'
     };
+}
+
+function buildForecastTimestamps(startTime, endTime, limit) {
+    const startMs = Date.parse(startTime);
+    const endMs = Date.parse(endTime);
+
+    if (endMs <= startMs) {
+        return null;
+    }
+
+    const count = Math.max(1, Math.min(limit, 24));
+    const stepMs = (endMs - startMs) / count;
+
+    return Array.from({ length: count }, (_, index) => (
+        new Date(startMs + stepMs * (index + 1)).toISOString()
+    ));
+}
+
+async function buildMlForecast(lat, lng, startTime, endTime, limit) {
+    const timestamps = buildForecastTimestamps(startTime, endTime, limit);
+    const forecast = [];
+    const warnings = [];
+    let h3Cell = null;
+
+    if (!timestamps) {
+        return null;
+    }
+
+    for (const timestamp of timestamps) {
+        try {
+            const mlResult = await callMlPrediction(lat, lng, timestamp);
+
+            if (!mlResult) {
+                warnings.push({ timestamp, code: 'PREDICTION_UNAVAILABLE' });
+                continue;
+            }
+
+            const score = normalizeScore(mlResult.crowd_score);
+            h3Cell = h3Cell || mlResult.h3_cell || null;
+
+            forecast.push({
+                timestamp: mlResult.timestamp || timestamp,
+                period: mlResult.period,
+                busynessScore: score,
+                busynessLevel: busynessLevel(score),
+                crowdCategory: mlResult.crowd_category,
+                pedestriansPredicted: mlResult.pedestrians,
+                source: 'ml_fastapi'
+            });
+        } catch (err) {
+            console.warn('ML forecast point unavailable:', err.message);
+            warnings.push({ timestamp, code: 'PREDICTION_UNAVAILABLE' });
+        }
+    }
+
+    return { h3Cell, forecast, warnings };
 }
 
 async function buildPrediction(lat, lng, targetTime, durationMinutes, clientId = null) {
@@ -249,7 +303,7 @@ router.get('/forecast', async (req, res) => {
     const lng = Number(req.query.lng);
     const startTime = (req.query.startTime || '').trim();
     const endTime = (req.query.endTime || '').trim();
-    const limit = parseLimit(req.query.limit, 24, 100);
+    const limit = parseLimit(req.query.limit, 6, 24);
 
     if (!Number.isFinite(lat) || !Number.isFinite(lng) || !startTime || !endTime) {
         return sendError(res, 400, 'INVALID_QUERY', 'lat, lng, startTime, and endTime are required');
@@ -259,45 +313,41 @@ router.get('/forecast', async (req, res) => {
         return sendError(res, 400, 'INVALID_QUERY', 'startTime and endTime must be valid date-time strings');
     }
 
+    if (!isInManhattanCoverage(lat, lng)) {
+        return sendError(res, 422, 'LOCATION_OUT_OF_COVERAGE', 'Prediction is currently available for Manhattan only');
+    }
+
+    if (!isFutureTime(endTime)) {
+        return sendError(res, 422, 'INVALID_QUERY', 'endTime must be in the future');
+    }
+
+    if (Date.parse(endTime) <= Date.parse(startTime)) {
+        return sendError(res, 422, 'INVALID_QUERY', 'endTime must be after startTime');
+    }
+
     try {
-        const nearestCell = await getNearestH3Cell(lat, lng);
+        const forecastResult = await buildMlForecast(lat, lng, startTime, endTime, limit);
 
-        if (nearestCell.rowCount === 0) {
-            return sendError(res, 503, 'PREDICTION_UNAVAILABLE', 'Forecast data is not available for this coordinate');
-        }
-
-        const h3Cell = nearestCell.rows[0].h3_cell;
-        const result = await getForecastScores(h3Cell, startTime, endTime, limit);
-
-        if (result.rowCount === 0) {
+        if (!forecastResult || forecastResult.forecast.length === 0) {
             return sendError(res, 503, 'PREDICTION_UNAVAILABLE', 'Forecast data is not available for this time range');
         }
 
-        const forecast = result.rows.map((row) => {
-            const score = normalizeScore(row.crowd_score);
-
-            return {
-                timestamp: row.query_timestamp,
-                period: row.period,
-                busynessScore: score,
-                busynessLevel: busynessLevel(score),
-                pedestriansPredicted: row.pedestrians_pred
-            };
-        });
-
         return sendSuccess(res, 200, {
-            h3Cell,
+            h3Cell: forecastResult.h3Cell,
             coordinates: { lat, lng },
             startTime,
             endTime,
-            forecast
-        }, { count: result.rowCount });
+            forecast: forecastResult.forecast
+        }, {
+            count: forecastResult.forecast.length,
+            warningCount: forecastResult.warnings.length,
+            source: 'ml_fastapi'
+        });
     } catch (err) {
         console.error('Forecast Query Failed:', err.message);
         return sendError(res, 500, 'INTERNAL_ERROR', 'Forecast query failed');
     }
 });
-
 router.post('/explanation', async (req, res) => {
     const { lat, lng, targetTime, busynessScore, period = null } = req.body || {};
     const parsedLat = Number(lat);
