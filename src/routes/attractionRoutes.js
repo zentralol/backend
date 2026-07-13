@@ -1,6 +1,8 @@
 const express = require('express');
 const {
     listAttractions,
+    getAttractionById,
+    searchAttractions,
     listAttractionsNearby,
     listRecentAttractionPredictions
 } = require('../repositories/attractionsRepository');
@@ -20,6 +22,20 @@ function validateCoordinate(lat, lng) {
     }
 
     return null;
+}
+
+function parseOptionalText(value) {
+    if (typeof value !== 'string') {
+        return null;
+    }
+
+    const trimmed = value.trim();
+    return trimmed || null;
+}
+
+function parseAttractionId(value) {
+    const id = Number(value);
+    return Number.isInteger(id) && id > 0 ? id : null;
 }
 
 async function loadAttractionsWithCrowd(loadAttractionsFn) {
@@ -62,6 +78,55 @@ router.get('/nearby', async (req, res) => {
     } catch (err) {
         console.error('Nearby attractions failed:', err.message);
         return sendError(res, 500, 'INTERNAL_ERROR', 'Nearby attraction query failed');
+    }
+});
+
+router.get('/search', async (req, res) => {
+    const query = parseOptionalText(req.query.q);
+    const category = parseOptionalText(req.query.category);
+    const hasLat = req.query.lat !== undefined;
+    const hasLng = req.query.lng !== undefined;
+    const lat = hasLat ? Number(req.query.lat) : null;
+    const lng = hasLng ? Number(req.query.lng) : null;
+    const limit = parseLimit(req.query.limit, 20, 50);
+
+    if (hasLat || hasLng) {
+        const coordinateError = validateCoordinate(lat, lng);
+        if (coordinateError) {
+            return sendError(res, 422, coordinateError.code, coordinateError.message);
+        }
+    }
+
+    try {
+        const attractions = await loadAttractionsWithCrowd(() =>
+            searchAttractions({ query, category, lat, lng, limit })
+        );
+
+        return sendSuccess(res, 200, { attractions }, { count: attractions.length });
+    } catch (err) {
+        console.error('Attraction search failed:', err.message);
+        return sendError(res, 500, 'INTERNAL_ERROR', 'Attraction search failed');
+    }
+});
+
+router.get('/:attractionId', async (req, res) => {
+    const attractionId = parseAttractionId(req.params.attractionId);
+    if (!attractionId) {
+        return sendError(res, 400, 'INVALID_QUERY', 'attractionId must be a positive integer');
+    }
+
+    try {
+        const attractions = await loadAttractionsWithCrowd(() => getAttractionById(attractionId));
+        const attraction = attractions[0];
+
+        if (!attraction) {
+            return sendError(res, 404, 'ATTRACTION_NOT_FOUND', 'Attraction not found');
+        }
+
+        return sendSuccess(res, 200, { attraction });
+    } catch (err) {
+        console.error('Attraction detail failed:', err.message);
+        return sendError(res, 500, 'INTERNAL_ERROR', 'Attraction detail query failed');
     }
 });
 

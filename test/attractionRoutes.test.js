@@ -43,12 +43,49 @@ const samplePredictionRows = [
     }
 ];
 
+function withoutDistance(row) {
+    const { distance_meters, ...rest } = row;
+    return rest;
+}
+
+function filterAttractions(query, category) {
+    const q = typeof query === 'string' ? query.toLowerCase() : null;
+    const categoryFilter = typeof category === 'string' ? category.toLowerCase() : null;
+
+    return sampleAttractionRows.filter((row) => {
+        const matchesQuery = !q
+            || row.name.toLowerCase().includes(q)
+            || row.description.toLowerCase().includes(q)
+            || row.neighborhood.toLowerCase().includes(q);
+        const matchesCategory = !categoryFilter || row.category.toLowerCase() === categoryFilter;
+
+        return matchesQuery && matchesCategory;
+    });
+}
+
 function createMockDb() {
     const calls = [];
 
     async function query(sql, params = []) {
         const text = String(sql);
         calls.push({ sql: text, params });
+
+        if (text.includes('FROM attractions') && text.includes('WHERE id = $1')) {
+            const row = sampleAttractionRows.find((attraction) => attraction.id === params[0]);
+            return {
+                rowCount: row ? 1 : 0,
+                rows: row ? [withoutDistance(row)] : []
+            };
+        }
+
+        if (text.includes('FROM attractions') && text.includes('ILIKE') && text.includes('distance_meters')) {
+            const rows = filterAttractions(params[0], params[1])
+                .sort((a, b) => a.distance_meters - b.distance_meters);
+            return {
+                rowCount: rows.length,
+                rows
+            };
+        }
 
         if (text.includes('FROM attractions') && text.includes('distance_meters')) {
             return {
@@ -57,10 +94,18 @@ function createMockDb() {
             };
         }
 
+        if (text.includes('FROM attractions') && text.includes('ILIKE')) {
+            const rows = filterAttractions(params[0], params[1]).map(withoutDistance);
+            return {
+                rowCount: rows.length,
+                rows
+            };
+        }
+
         if (text.includes('FROM attractions') && text.includes('ORDER BY name')) {
             return {
                 rowCount: sampleAttractionRows.length,
-                rows: sampleAttractionRows.map(({ distance_meters, ...row }) => row)
+                rows: sampleAttractionRows.map(withoutDistance)
             };
         }
 
@@ -175,5 +220,71 @@ test('GET /attractions/nearby rejects out-of-coverage coordinates', async () => 
 
         assert.equal(response.status, 422);
         assert.equal(response.body.error.code, 'LOCATION_OUT_OF_COVERAGE');
+    });
+});
+
+test('GET /attractions/search filters by query and category', async () => {
+    await withTestServer(async (baseUrl, calls) => {
+        const response = await requestJson(
+            baseUrl,
+            '/api/v1/attractions/search?q=Central&category=Parks%20%26%20Outdoors&limit=5'
+        );
+
+        assert.equal(response.status, 200);
+        assert.equal(response.body.data.attractions.length, 1);
+        assert.equal(response.body.data.attractions[0].name, 'Central Park');
+        assert.equal(response.body.data.attractions[0].crowd.level, 'quiet');
+        assert.ok(calls.some((call) => call.sql.includes('ILIKE') && call.params[0] === 'Central'));
+    });
+});
+
+test('GET /attractions/search can distance-sort filtered results', async () => {
+    await withTestServer(async (baseUrl) => {
+        const response = await requestJson(
+            baseUrl,
+            '/api/v1/attractions/search?q=Midtown&lat=40.758&lng=-73.9855&limit=5'
+        );
+
+        assert.equal(response.status, 200);
+        assert.equal(response.body.data.attractions.length, 2);
+        assert.equal(response.body.data.attractions[0].name, 'Times Square');
+        assert.equal(response.body.data.attractions[0].distanceMeters, 250);
+    });
+});
+
+test('GET /attractions/search rejects invalid optional coordinates', async () => {
+    await withTestServer(async (baseUrl) => {
+        const response = await requestJson(baseUrl, '/api/v1/attractions/search?q=park&lat=bad&lng=-73.9855');
+
+        assert.equal(response.status, 422);
+        assert.equal(response.body.error.code, 'INVALID_COORDINATES');
+    });
+});
+
+test('GET /attractions/:id returns one attraction with crowd data', async () => {
+    await withTestServer(async (baseUrl) => {
+        const response = await requestJson(baseUrl, '/api/v1/attractions/1');
+
+        assert.equal(response.status, 200);
+        assert.equal(response.body.data.attraction.name, 'Central Park');
+        assert.equal(response.body.data.attraction.crowd.level, 'quiet');
+    });
+});
+
+test('GET /attractions/:id rejects invalid ids', async () => {
+    await withTestServer(async (baseUrl) => {
+        const response = await requestJson(baseUrl, '/api/v1/attractions/not-a-number');
+
+        assert.equal(response.status, 400);
+        assert.equal(response.body.error.code, 'INVALID_QUERY');
+    });
+});
+
+test('GET /attractions/:id returns 404 when missing', async () => {
+    await withTestServer(async (baseUrl) => {
+        const response = await requestJson(baseUrl, '/api/v1/attractions/999');
+
+        assert.equal(response.status, 404);
+        assert.equal(response.body.error.code, 'ATTRACTION_NOT_FOUND');
     });
 });
