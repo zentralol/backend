@@ -67,6 +67,7 @@ function createMockDb(mode = {}) {
 
         if (text.includes('zentra_get_forecast_scores')) {
             if (mode.throwForecast) throw new Error('forecast db failed');
+            if (mode.emptyForecast) return { rowCount: 0, rows: [] };
             return {
                 rowCount: 2,
                 rows: [
@@ -349,6 +350,12 @@ test('GET /predictions/forecast handles unavailable and failing data', async () 
     await withTestServer({ emptyNearestCell: true }, async (baseUrl) => {
         const unavailable = await requestJson(baseUrl, '/api/v1/predictions/forecast?lat=40.758&lng=-73.9855&startTime=2026-07-01T00:00:00-04:00&endTime=2026-07-02T00:00:00-04:00');
         assert.equal(unavailable.status, 503);
+    });
+
+    await withTestServer({ emptyForecast: true }, async (baseUrl) => {
+        const empty = await requestJson(baseUrl, '/api/v1/predictions/forecast?lat=40.758&lng=-73.9855&startTime=2026-07-01T00:00:00-04:00&endTime=2026-07-02T00:00:00-04:00');
+        assert.equal(empty.status, 503);
+        assert.equal(empty.body.error.code, 'PREDICTION_UNAVAILABLE');
     });
 
     await withTestServer({ throwForecast: true }, async (baseUrl) => {

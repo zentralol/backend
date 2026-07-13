@@ -269,6 +269,10 @@ router.get('/forecast', async (req, res) => {
         const h3Cell = nearestCell.rows[0].h3_cell;
         const result = await getForecastScores(h3Cell, startTime, endTime, limit);
 
+        if (result.rowCount === 0) {
+            return sendError(res, 503, 'PREDICTION_UNAVAILABLE', 'Forecast data is not available for this time range');
+        }
+
         const forecast = result.rows.map((row) => {
             const score = normalizeScore(row.crowd_score);
 
