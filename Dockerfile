@@ -2,7 +2,10 @@ FROM node:20-alpine
 
 WORKDIR /app
 
-ENV NODE_ENV=production
+RUN apk add --no-cache tzdata
+
+ENV NODE_ENV=production \
+    TZ=America/New_York
 
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev
