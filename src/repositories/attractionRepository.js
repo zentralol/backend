@@ -1,7 +1,8 @@
 const pool = require('../config/database');
 const {
     SELECT_ATTRACTIONS_FOR_PREDICTION,
-    UPSERT_ATTRACTION_PREDICTION
+    UPSERT_ATTRACTION_PREDICTION,
+    DELETE_STALE_ATTRACTION_PREDICTIONS
 } = require('./sql/attractionQueries');
 
 async function getAttractionsForPrediction() {
@@ -23,7 +24,13 @@ async function upsertAttractionPrediction(prediction) {
     ]);
 }
 
+async function deleteStaleAttractionPredictions(cutoffIso) {
+    const result = await pool.query(DELETE_STALE_ATTRACTION_PREDICTIONS, [cutoffIso]);
+    return result.rowCount ?? 0;
+}
+
 module.exports = {
     getAttractionsForPrediction,
-    upsertAttractionPrediction
+    upsertAttractionPrediction,
+    deleteStaleAttractionPredictions
 };

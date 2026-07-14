@@ -62,7 +62,9 @@ function createCrowdPredictionJob(deps = {}) {
         callMlPrediction = mlClient.callMlPrediction,
         getAttractionsForPrediction = attractionRepository.getAttractionsForPrediction,
         upsertAttractionPrediction = attractionRepository.upsertAttractionPrediction,
+        deleteStaleAttractionPredictions = attractionRepository.deleteStaleAttractionPredictions,
         concurrency = scheduleConfig.concurrency,
+        retentionMs = scheduleConfig.retentionMs,
         now = () => new Date(),
         logger = console
     } = deps;
@@ -84,15 +86,18 @@ function createCrowdPredictionJob(deps = {}) {
             return { alreadyRunning: true };
         }
 
-        if (!isMlConfigured()) {
-            logger.warn('Crowd Prediction Job skipped: ML service is not configured');
-            return { skipped: true, reason: 'ml_not_configured' };
-        }
-
         running = true;
         const startedAt = Date.now();
 
         try {
+            const cutoff = new Date(now().getTime() - retentionMs()).toISOString();
+            const deletedCount = await deleteStaleAttractionPredictions(cutoff);
+
+            if (!isMlConfigured()) {
+                logger.warn('Crowd Prediction Job skipped: ML service is not configured');
+                return { skipped: true, reason: 'ml_not_configured', deletedCount };
+            }
+
             // One New York five-minute timestamp for the whole run: every
             // attraction lands in the same five-minute bucket (matching the
             // DB key) and the past-or-present value makes mlClient route to
@@ -124,6 +129,7 @@ function createCrowdPredictionJob(deps = {}) {
                 succeeded: rows.length - failures.length,
                 failed: failures.length,
                 predictedFor,
+                deletedCount,
                 durationMs: Date.now() - startedAt
             };
             logger.log('Crowd Prediction Job finished:', JSON.stringify(summary));

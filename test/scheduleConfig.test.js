@@ -84,3 +84,24 @@ test('concurrency honors a valid override', () => {
         assert.equal(scheduleConfig.concurrency(), 4);
     });
 });
+
+test('retentionMs defaults to one hour when unset or invalid', () => {
+    withEnv({ CROWD_PREDICTION_RETENTION_MS: undefined }, () => {
+        assert.equal(scheduleConfig.retentionMs(), 3600000);
+    });
+    withEnv({ CROWD_PREDICTION_RETENTION_MS: 'abc' }, () => {
+        assert.equal(scheduleConfig.retentionMs(), 3600000);
+    });
+    withEnv({ CROWD_PREDICTION_RETENTION_MS: '0' }, () => {
+        assert.equal(scheduleConfig.retentionMs(), 3600000);
+    });
+    withEnv({ CROWD_PREDICTION_RETENTION_MS: '-1' }, () => {
+        assert.equal(scheduleConfig.retentionMs(), 3600000);
+    });
+});
+
+test('retentionMs honors a valid override', () => {
+    withEnv({ CROWD_PREDICTION_RETENTION_MS: '7200000' }, () => {
+        assert.equal(scheduleConfig.retentionMs(), 7200000);
+    });
+});
