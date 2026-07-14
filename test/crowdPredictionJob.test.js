@@ -7,6 +7,7 @@ const silentLogger = { log: () => {}, warn: () => {}, error: () => {} };
 
 function buildDeps(overrides = {}) {
     const upserts = [];
+    const deleteCalls = [];
     const deps = {
         isMlConfigured: () => true,
         callMlPrediction: async () => ({
@@ -24,18 +25,23 @@ function buildDeps(overrides = {}) {
         upsertAttractionPrediction: async (prediction) => {
             upserts.push(prediction);
         },
+        deleteStaleAttractionPredictions: async (cutoffIso) => {
+            deleteCalls.push(cutoffIso);
+            return 3;
+        },
+        retentionMs: () => 3600000,
         concurrency: () => 2,
         now: () => new Date('2026-07-12T10:23:45.000Z'),
         logger: silentLogger,
         ...overrides
     };
 
-    return { deps, upserts };
+    return { deps, upserts, deleteCalls };
 }
 
 test('predicts and upserts one row per attraction on the happy path', async () => {
     // Arrange
-    const { deps, upserts } = buildDeps();
+    const { deps, upserts, deleteCalls } = buildDeps();
     const job = createCrowdPredictionJob(deps);
 
     // Act
@@ -45,8 +51,11 @@ test('predicts and upserts one row per attraction on the happy path', async () =
     assert.equal(summary.total, 2);
     assert.equal(summary.succeeded, 2);
     assert.equal(summary.failed, 0);
+    assert.equal(summary.deletedCount, 3);
     assert.equal(typeof summary.durationMs, 'number');
     assert.equal(upserts.length, 2);
+    assert.equal(deleteCalls.length, 1);
+    assert.equal(deleteCalls[0], '2026-07-12T09:23:45.000Z');
     assert.deepEqual(
         upserts.map((u) => u.attractionId).sort(),
         [1, 2]
@@ -167,7 +176,7 @@ test('counts a failed upsert without aborting the rest', async () => {
 test('skips the run when the ML service is not configured', async () => {
     // Arrange
     let attractionsFetched = false;
-    const { deps } = buildDeps({
+    const { deps, deleteCalls } = buildDeps({
         isMlConfigured: () => false,
         getAttractionsForPrediction: async () => {
             attractionsFetched = true;
@@ -181,7 +190,33 @@ test('skips the run when the ML service is not configured', async () => {
 
     // Assert
     assert.equal(summary.skipped, true);
+    assert.equal(summary.deletedCount, 3);
+    assert.equal(deleteCalls.length, 1);
     assert.equal(attractionsFetched, false);
+});
+
+test('still deletes stale predictions when the ML service is not configured', async () => {
+    const { deps, deleteCalls } = buildDeps({
+        isMlConfigured: () => false
+    });
+    const job = createCrowdPredictionJob(deps);
+
+    await job.run();
+
+    assert.equal(deleteCalls.length, 1);
+    assert.equal(deleteCalls[0], '2026-07-12T09:23:45.000Z');
+});
+
+test('releases the run lock after delete throws', async () => {
+    const { deps } = buildDeps({
+        deleteStaleAttractionPredictions: async () => {
+            throw new Error('delete failed');
+        }
+    });
+    const job = createCrowdPredictionJob(deps);
+
+    await assert.rejects(() => job.run(), /delete failed/);
+    assert.equal(job.isRunning(), false);
 });
 
 test('logs the start and finish of every run', async () => {

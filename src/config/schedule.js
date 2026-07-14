@@ -7,6 +7,7 @@ const { positiveNumberOrDefault } = require('../utils/numbers');
 
 const DEFAULT_INTERVAL_MS = 300000; // 5 minutes
 const DEFAULT_CONCURRENCY = 8;
+const DEFAULT_RETENTION_MS = 3600000; // 1 hour
 
 function jobEnabled() {
     return process.env.CROWD_PREDICTION_JOB_ENABLED === 'true';
@@ -20,8 +21,13 @@ function concurrency() {
     return positiveNumberOrDefault(process.env.CROWD_PREDICTION_CONCURRENCY, DEFAULT_CONCURRENCY);
 }
 
+function retentionMs() {
+    return positiveNumberOrDefault(process.env.CROWD_PREDICTION_RETENTION_MS, DEFAULT_RETENTION_MS);
+}
+
 module.exports = {
     jobEnabled,
     intervalMs,
-    concurrency
+    concurrency,
+    retentionMs
 };

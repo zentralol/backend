@@ -3,7 +3,8 @@ const assert = require('node:assert/strict');
 
 const {
     SELECT_ATTRACTIONS_FOR_PREDICTION,
-    UPSERT_ATTRACTION_PREDICTION
+    UPSERT_ATTRACTION_PREDICTION,
+    DELETE_STALE_ATTRACTION_PREDICTIONS
 } = require('../src/repositories/sql/attractionQueries');
 
 test('attraction select quotes the capitalized Name column', () => {
@@ -30,4 +31,9 @@ test('attraction prediction upsert targets the five-minute unique key', () => {
 
 test('attraction prediction upsert refreshes updated_at on conflict', () => {
     assert.match(UPSERT_ATTRACTION_PREDICTION, /updated_at = now\(\)/);
+});
+
+test('stale attraction prediction delete uses predicted_for cutoff', () => {
+    assert.match(DELETE_STALE_ATTRACTION_PREDICTIONS, /DELETE FROM attraction_predictions/i);
+    assert.match(DELETE_STALE_ATTRACTION_PREDICTIONS, /predicted_for < \$1::timestamptz/i);
 });
