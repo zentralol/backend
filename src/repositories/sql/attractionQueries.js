@@ -27,7 +27,13 @@ const UPSERT_ATTRACTION_PREDICTION = `
         updated_at = now()
 `;
 
+const DELETE_STALE_ATTRACTION_PREDICTIONS = `
+    DELETE FROM attraction_predictions
+    WHERE predicted_for < $1::timestamptz
+`;
+
 module.exports = {
     SELECT_ATTRACTIONS_FOR_PREDICTION,
-    UPSERT_ATTRACTION_PREDICTION
+    UPSERT_ATTRACTION_PREDICTION,
+    DELETE_STALE_ATTRACTION_PREDICTIONS
 };

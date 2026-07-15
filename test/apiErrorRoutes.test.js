@@ -67,6 +67,7 @@ function createMockDb(mode = {}) {
 
         if (text.includes('zentra_get_forecast_scores')) {
             if (mode.throwForecast) throw new Error('forecast db failed');
+            if (mode.emptyForecast) return { rowCount: 0, rows: [] };
             return {
                 rowCount: 2,
                 rows: [
@@ -338,23 +339,44 @@ test('POST /predictions/batch records internal warning when one item throws', as
 test('GET /predictions/forecast validates missing and invalid query params', async () => {
     await withTestServer({}, async (baseUrl) => {
         const missing = await requestJson(baseUrl, '/api/v1/predictions/forecast?lat=40.758');
-        const invalid = await requestJson(baseUrl, '/api/v1/predictions/forecast?lat=40.758&lng=-73.9855&startTime=bad&endTime=2026-07-02T00:00:00-04:00');
+        const invalid = await requestJson(baseUrl, '/api/v1/predictions/forecast?lat=40.758&lng=-73.9855&startTime=bad&endTime=2099-01-01T03:00:00Z');
+        const reversed = await requestJson(baseUrl, '/api/v1/predictions/forecast?lat=40.758&lng=-73.9855&startTime=2099-01-01T03:00:00Z&endTime=2099-01-01T00:00:00Z');
+        const outside = await requestJson(baseUrl, '/api/v1/predictions/forecast?lat=41.2&lng=-73.9855&startTime=2099-01-01T00:00:00Z&endTime=2099-01-01T03:00:00Z');
+        const pastEnd = await requestJson(baseUrl, '/api/v1/predictions/forecast?lat=40.758&lng=-73.9855&startTime=2020-01-01T00:00:00Z&endTime=2020-01-01T03:00:00Z');
 
         assert.equal(missing.status, 400);
         assert.equal(invalid.status, 400);
+        assert.equal(reversed.status, 422);
+        assert.equal(outside.status, 422);
+        assert.equal(outside.body.error.code, 'LOCATION_OUT_OF_COVERAGE');
+        assert.equal(pastEnd.status, 422);
     });
 });
 
-test('GET /predictions/forecast handles unavailable and failing data', async () => {
-    await withTestServer({ emptyNearestCell: true }, async (baseUrl) => {
-        const unavailable = await requestJson(baseUrl, '/api/v1/predictions/forecast?lat=40.758&lng=-73.9855&startTime=2026-07-01T00:00:00-04:00&endTime=2026-07-02T00:00:00-04:00');
-        assert.equal(unavailable.status, 503);
-    });
+test('GET /predictions/forecast handles unavailable ML forecast data', async () => {
+    const originalBaseUrl = process.env.ML_API_BASE_URL;
 
-    await withTestServer({ throwForecast: true }, async (baseUrl) => {
-        const failing = await requestJson(baseUrl, '/api/v1/predictions/forecast?lat=40.758&lng=-73.9855&startTime=2026-07-01T00:00:00-04:00&endTime=2026-07-02T00:00:00-04:00');
-        assert.equal(failing.status, 500);
-    });
+    try {
+        delete process.env.ML_API_BASE_URL;
+        await withTestServer({}, async (baseUrl) => {
+            const unavailable = await requestJson(baseUrl, '/api/v1/predictions/forecast?lat=40.758&lng=-73.9855&startTime=2099-01-01T00:00:00Z&endTime=2099-01-01T03:00:00Z');
+            assert.equal(unavailable.status, 503);
+            assert.equal(unavailable.body.error.code, 'PREDICTION_UNAVAILABLE');
+        });
+
+        process.env.ML_API_BASE_URL = 'http://127.0.0.1:1';
+        await withTestServer({}, async (baseUrl) => {
+            const failing = await requestJson(baseUrl, '/api/v1/predictions/forecast?lat=40.758&lng=-73.9855&startTime=2099-01-01T00:00:00Z&endTime=2099-01-01T03:00:00Z&limit=2');
+            assert.equal(failing.status, 503);
+            assert.equal(failing.body.error.code, 'PREDICTION_UNAVAILABLE');
+        });
+    } finally {
+        if (originalBaseUrl === undefined) {
+            delete process.env.ML_API_BASE_URL;
+        } else {
+            process.env.ML_API_BASE_URL = originalBaseUrl;
+        }
+    }
 });
 
 test('POST /recommendations validates input and handles failures', async () => {
