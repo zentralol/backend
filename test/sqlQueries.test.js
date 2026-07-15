@@ -26,6 +26,16 @@ test('write queries remain parameterized', () => {
     assert.match(INSERT_FEEDBACK, /\$5/);
     assert.match(INSERT_PREDICTION_REQUEST, /\$1/);
     assert.match(INSERT_PREDICTION_REQUEST, /\$6/);
+    assert.match(h3Queries.UPSERT_H3_GRID_SCORE, /\$1/);
+    assert.match(h3Queries.UPSERT_H3_GRID_SCORE, /\$7/);
+    assert.doesNotMatch(h3Queries.UPSERT_H3_GRID_SCORE, /\$8/);
+});
+
+test('h3 grid score upsert targets the cell/timestamp unique key and preserves enrichment columns', () => {
+    assert.match(h3Queries.UPSERT_H3_GRID_SCORE, /ON CONFLICT \(h3_cell, query_timestamp\)/);
+    assert.match(h3Queries.UPSERT_H3_GRID_SCORE, /crowd_score = EXCLUDED\.crowd_score/);
+    assert.doesNotMatch(h3Queries.UPSERT_H3_GRID_SCORE, /poi_total/);
+    assert.doesNotMatch(h3Queries.UPSERT_H3_GRID_SCORE, /ensemble_log_pred/);
 });
 
 test('feedback stats queries call Supabase PostgreSQL functions', () => {

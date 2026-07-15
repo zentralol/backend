@@ -5,7 +5,8 @@ const {
     SELECT_NEAREST_PREDICTION_SCORE,
     SELECT_NEAREST_H3_CELL,
     SELECT_FORECAST_SCORES,
-    SELECT_QUIETER_NEARBY_SCORES
+    SELECT_QUIETER_NEARBY_SCORES,
+    UPSERT_H3_GRID_SCORE
 } = require('./sql/h3Queries');
 
 function getH3GridCells(limit) {
@@ -32,11 +33,24 @@ function getQuieterNearbyScores(lat, lng, targetTime, limit) {
     return pool.query(SELECT_QUIETER_NEARBY_SCORES, [lat, lng, targetTime, limit]);
 }
 
+function upsertH3GridScore(score) {
+    return pool.query(UPSERT_H3_GRID_SCORE, [
+        score.h3Cell,
+        score.lat,
+        score.lon,
+        score.period,
+        score.queryTimestamp,
+        score.crowdScore,
+        score.pedestriansPred
+    ]);
+}
+
 module.exports = {
     getH3GridCells,
     getHeatmapScores,
     getNearestPredictionScore,
     getNearestH3Cell,
     getForecastScores,
-    getQuieterNearbyScores
+    getQuieterNearbyScores,
+    upsertH3GridScore
 };
