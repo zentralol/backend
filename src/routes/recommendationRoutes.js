@@ -66,8 +66,17 @@ router.post('/', async (req, res) => {
         return sendError(res, 400, 'INVALID_QUERY', 'targetTime must be a valid date-time string');
     }
 
+    const coordinateError = validateCoordinate(parsedLat, parsedLng);
+    if (coordinateError) {
+        return sendError(res, 422, coordinateError.code, coordinateError.message);
+    }
+
     try {
         const result = await getQuieterNearbyScores(parsedLat, parsedLng, targetTime, parsedLimit);
+
+        if (result.rowCount === 0) {
+            return sendError(res, 503, 'PREDICTION_UNAVAILABLE', 'Recommendation data is not available for this coordinate and time');
+        }
 
         const recommendations = result.rows.map((row) => {
             const score = normalizeScore(row.crowd_score);

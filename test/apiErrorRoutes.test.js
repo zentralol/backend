@@ -113,6 +113,7 @@ function createMockDb(mode = {}) {
 
         if (text.includes('zentra_get_quieter_nearby_scores')) {
             if (mode.throwRecommendations) throw new Error('recommendation db failed');
+            if (mode.emptyRecommendations) return { rowCount: 0, rows: [] };
             return {
                 rowCount: 1,
                 rows: [{
@@ -393,9 +394,25 @@ test('POST /recommendations validates input and handles failures', async () => {
     await withTestServer({}, async (baseUrl) => {
         const missing = await requestJson(baseUrl, '/api/v1/recommendations', { method: 'POST', body: JSON.stringify({}) });
         const badDate = await requestJson(baseUrl, '/api/v1/recommendations', { method: 'POST', body: JSON.stringify({ lat: 40.758, lng: -73.9855, targetTime: 'bad' }) });
+        const outside = await requestJson(baseUrl, '/api/v1/recommendations', {
+            method: 'POST',
+            body: JSON.stringify({ lat: 41.2, lng: -73.9855, targetTime: '2026-07-01T16:30:00-04:00' })
+        });
 
         assert.equal(missing.status, 400);
         assert.equal(badDate.status, 400);
+        assert.equal(outside.status, 422);
+        assert.equal(outside.body.error.code, 'LOCATION_OUT_OF_COVERAGE');
+    });
+
+    await withTestServer({ emptyRecommendations: true }, async (baseUrl) => {
+        const unavailable = await requestJson(baseUrl, '/api/v1/recommendations', {
+            method: 'POST',
+            body: JSON.stringify({ lat: 40.758, lng: -73.9855, targetTime: '2026-07-01T16:30:00-04:00' })
+        });
+
+        assert.equal(unavailable.status, 503);
+        assert.equal(unavailable.body.error.code, 'PREDICTION_UNAVAILABLE');
     });
 
     await withTestServer({ throwRecommendations: true }, async (baseUrl) => {
