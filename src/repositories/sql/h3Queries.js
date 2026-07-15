@@ -30,11 +30,28 @@ const SELECT_QUIETER_NEARBY_SCORES = `
     FROM public.zentra_get_quieter_nearby_scores($1::double precision, $2::double precision, $3::timestamptz, $4::integer)
 `;
 
+// One row per (h3_cell, query_timestamp) bucket. On conflict, only the fields
+// the refresh job actually produces are overwritten; enrichment columns from
+// the original batch-scored data (poi_total, tlc_trip_count, etc.) are left
+// untouched.
+const UPSERT_H3_GRID_SCORE = `
+    INSERT INTO h3_grid_scores
+        (h3_cell, lat, lon, period, query_timestamp, crowd_score, pedestrians_pred)
+    VALUES
+        ($1, $2, $3, $4, $5::timestamptz, $6, $7)
+    ON CONFLICT (h3_cell, query_timestamp)
+    DO UPDATE SET
+        period = EXCLUDED.period,
+        crowd_score = EXCLUDED.crowd_score,
+        pedestrians_pred = EXCLUDED.pedestrians_pred
+`;
+
 module.exports = {
     SELECT_H3_GRID_CELLS,
     SELECT_HEATMAP_SCORES,
     SELECT_NEAREST_PREDICTION_SCORE,
     SELECT_NEAREST_H3_CELL,
     SELECT_FORECAST_SCORES,
-    SELECT_QUIETER_NEARBY_SCORES
+    SELECT_QUIETER_NEARBY_SCORES,
+    UPSERT_H3_GRID_SCORE
 };
