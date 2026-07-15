@@ -16,6 +16,23 @@ function createMockDb() {
             return { rows: [{ '?column?': 1 }], rowCount: 1 };
         }
 
+        if (text.includes('FROM heatmap_predictions')) {
+            return {
+                rowCount: 1,
+                rows: [{
+                    target_time: '2026-07-01T16:30:00-04:00',
+                    h3_cell: '892a1008807ffff',
+                    lat: 40.7952,
+                    lon: -73.9725,
+                    period: 'PM',
+                    crowd_score: 82,
+                    crowd_level: 'very_busy',
+                    crowd_category: 'very_busy',
+                    pedestrians_pred: 3399.1,
+                    source: 'ml_fastapi'
+                }]
+            };
+        }
         if (text.includes('zentra_get_heatmap_scores')) {
             return {
                 rowCount: 1,
@@ -270,14 +287,16 @@ test('protected routes reject requests without authentication', async () => {
     });
 });
 
-test('GET /map/heatmap returns database-backed H3 points', async () => {
-    await withTestServer(async (baseUrl) => {
+test('GET /map/heatmap returns cached heatmap predictions first', async () => {
+    await withTestServer(async (baseUrl, calls) => {
         const response = await requestJson(baseUrl, '/api/v1/map/heatmap?source=database&limit=1&targetTime=2026-07-01T16:30:00-04:00');
 
         assert.equal(response.status, 200);
-        assert.equal(response.body.data.source, 'h3_grid_scores');
-        assert.equal(response.body.data.points[0].crowdScore, 53);
-        assert.equal(response.body.data.points[0].crowdLevel, 'moderate');
+        assert.equal(response.body.data.source, 'heatmap_predictions');
+        assert.equal(response.body.data.points[0].crowdScore, 82);
+        assert.equal(response.body.data.points[0].crowdLevel, 'very_busy');
+        assert.equal(response.body.data.points[0].source, 'ml_fastapi');
+        assert.ok(calls.some((call) => call.sql.includes('FROM heatmap_predictions')));
     });
 });
 
@@ -506,3 +525,4 @@ test('GET /admin/stats/feedback returns feedback analytics', async () => {
         assert.equal(response.body.data.recentComments[0].comment, 'Useful prediction');
     });
 });
+

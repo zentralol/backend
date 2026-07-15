@@ -2,9 +2,16 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 
 const {
+    SELECT_HEATMAP_PREDICTIONS,
     UPSERT_HEATMAP_PREDICTION,
     DELETE_STALE_HEATMAP_PREDICTIONS
 } = require('../src/repositories/sql/heatmapQueries');
+
+test('SELECT_HEATMAP_PREDICTIONS reads the nearest cached prediction batch', () => {
+    assert.match(SELECT_HEATMAP_PREDICTIONS, /FROM heatmap_predictions/i);
+    assert.match(SELECT_HEATMAP_PREDICTIONS, /ABS\(EXTRACT\(EPOCH FROM \(target_time - \$1::timestamp\)\)\)/i);
+    assert.match(SELECT_HEATMAP_PREDICTIONS, /LIMIT \$2::integer/i);
+});
 
 test('UPSERT_HEATMAP_PREDICTION writes into heatmap_predictions with conflict handling', () => {
     assert.match(UPSERT_HEATMAP_PREDICTION, /INSERT INTO heatmap_predictions/i);
@@ -16,3 +23,4 @@ test('DELETE_STALE_HEATMAP_PREDICTIONS removes rows older than cutoff', () => {
     assert.match(DELETE_STALE_HEATMAP_PREDICTIONS, /DELETE FROM heatmap_predictions/i);
     assert.match(DELETE_STALE_HEATMAP_PREDICTIONS, /target_time < \$1::timestamp/i);
 });
+

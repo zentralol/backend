@@ -1,8 +1,13 @@
 const pool = require('../config/database');
 const {
+    SELECT_HEATMAP_PREDICTIONS,
     UPSERT_HEATMAP_PREDICTION,
     DELETE_STALE_HEATMAP_PREDICTIONS
 } = require('./sql/heatmapQueries');
+
+async function getCachedHeatmapPredictions(targetTime, limit) {
+    return pool.query(SELECT_HEATMAP_PREDICTIONS, [targetTime, limit]);
+}
 
 async function upsertHeatmapPrediction(prediction) {
     return pool.query(UPSERT_HEATMAP_PREDICTION, [
@@ -24,6 +29,7 @@ async function deleteStaleHeatmapPredictions(cutoffTargetTime) {
 }
 
 module.exports = {
+    getCachedHeatmapPredictions,
     upsertHeatmapPrediction,
     deleteStaleHeatmapPredictions
 };

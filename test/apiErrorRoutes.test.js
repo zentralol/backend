@@ -18,6 +18,24 @@ function createMockDb(mode = {}) {
             return { rows: [{ '?column?': 1 }], rowCount: 1 };
         }
 
+        if (text.includes('FROM heatmap_predictions')) {
+            if (mode.emptyCachedHeatmap) return { rowCount: 0, rows: [] };
+            return {
+                rowCount: 1,
+                rows: [{
+                    target_time: '2026-07-01T16:30:00-04:00',
+                    h3_cell: '892a1008807ffff',
+                    lat: 40.7952,
+                    lon: -73.9725,
+                    period: 'PM',
+                    crowd_score: 82,
+                    crowd_level: 'very_busy',
+                    crowd_category: 'very_busy',
+                    pedestrians_pred: 3399.1,
+                    source: 'ml_fastapi'
+                }]
+            };
+        }
         if (text.includes('zentra_get_heatmap_scores')) {
             if (mode.emptyHeatmap) return { rowCount: 0, rows: [] };
             return {
@@ -234,7 +252,7 @@ test('GET /health returns 503 when database check fails', async () => {
 });
 
 test('GET /map/heatmap returns 500 when database fallback fails', async () => {
-    await withTestServer({ throwOn: 'zentra_get_heatmap_scores' }, async (baseUrl) => {
+    await withTestServer({ emptyCachedHeatmap: true, throwOn: 'zentra_get_heatmap_scores' }, async (baseUrl) => {
         const response = await requestJson(baseUrl, '/api/v1/map/heatmap?source=database&targetTime=2026-07-01T16:30:00-04:00');
 
         assert.equal(response.status, 500);
@@ -550,3 +568,4 @@ test('GET /admin/stats/feedback validates dates and handles database failures', 
         assert.equal(failing.status, 500);
     });
 });
+
