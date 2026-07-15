@@ -1,6 +1,5 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const http = require('node:http');
 
 process.env.NODE_ENV = 'test';
 
@@ -218,49 +217,6 @@ async function withTestServer(fn) {
     }
 }
 
-async function withMockMlServer(fn) {
-    const calls = [];
-    const server = http.createServer((req, res) => {
-        let body = '';
-
-        req.on('data', (chunk) => {
-            body += chunk;
-        });
-
-        req.on('end', () => {
-            const payload = body ? JSON.parse(body) : {};
-            calls.push({ method: req.method, url: req.url, body: payload });
-
-            res.writeHead(200, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({
-                h3_cell: '892a100d67bffff',
-                lat: payload.lat,
-                lon: payload.lon,
-                timestamp: payload.when,
-                period: 'PM',
-                pedestrians: 3067.3,
-                crowd_score: 0.82,
-                crowd_category: 'very_busy'
-            }));
-        });
-    });
-
-    const originalBaseUrl = process.env.ML_API_BASE_URL;
-
-    try {
-        await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
-        const { port } = server.address();
-        process.env.ML_API_BASE_URL = `http://127.0.0.1:${port}`;
-        await fn(calls);
-    } finally {
-        if (originalBaseUrl === undefined) {
-            delete process.env.ML_API_BASE_URL;
-        } else {
-            process.env.ML_API_BASE_URL = originalBaseUrl;
-        }
-        await new Promise((resolve, reject) => server.close((err) => (err ? reject(err) : resolve())));
-    }
-}
 async function requestJson(baseUrl, path, options = {}) {
     const {
         auth = true,
@@ -391,23 +347,19 @@ test('POST /predictions/batch accepts coordinates and returns warnings for inval
     });
 });
 
-test('GET /predictions/forecast returns ML-backed forecast rows', async () => {
-    await withMockMlServer(async (mlCalls) => {
-        await withTestServer(async (baseUrl) => {
-            const response = await requestJson(baseUrl, '/api/v1/predictions/forecast?lat=40.758&lng=-73.9855&startTime=2099-01-01T00:00:00Z&endTime=2099-01-01T03:00:00Z&limit=3');
+test('GET /predictions/forecast returns refreshed DB-backed forecast rows', async () => {
+    await withTestServer(async (baseUrl, calls) => {
+        const response = await requestJson(baseUrl, '/api/v1/predictions/forecast?lat=40.758&lng=-73.9855&startTime=2099-01-01T00:00:00Z&endTime=2099-01-01T03:00:00Z&limit=3');
 
-            assert.equal(response.status, 200);
-            assert.equal(response.body.data.h3Cell, '892a100d67bffff');
-            assert.equal(response.body.data.forecast.length, 3);
-            assert.equal(response.body.data.forecast[0].busynessLevel, 'very_busy');
-            assert.equal(response.body.data.forecast[0].source, 'ml_fastapi');
-            assert.equal(response.body.meta.source, 'ml_fastapi');
-            assert.equal(mlCalls.length, 3);
-            assert.ok(mlCalls.every((call) => call.url === '/predict/future'));
-        });
+        assert.equal(response.status, 200);
+        assert.equal(response.body.data.h3Cell, '892a100d67bffff');
+        assert.equal(response.body.data.forecast.length, 3);
+        assert.equal(response.body.data.forecast[0].busynessLevel, 'very_busy');
+        assert.equal(response.body.data.forecast[0].source, 'h3_grid_scores');
+        assert.equal(response.body.meta.source, 'h3_grid_scores');
+        assert.ok(calls.some((call) => call.sql.includes('zentra_get_forecast_scores')));
     });
 });
-
 test('POST /predictions/explanation returns structured explanation text', async () => {
     await withTestServer(async (baseUrl) => {
         const response = await requestJson(baseUrl, '/api/v1/predictions/explanation', {

@@ -353,32 +353,24 @@ test('GET /predictions/forecast validates missing and invalid query params', asy
     });
 });
 
-test('GET /predictions/forecast handles unavailable ML forecast data', async () => {
-    const originalBaseUrl = process.env.ML_API_BASE_URL;
+test('GET /predictions/forecast handles unavailable and failing refreshed DB data', async () => {
+    await withTestServer({ emptyNearestCell: true }, async (baseUrl) => {
+        const unavailable = await requestJson(baseUrl, '/api/v1/predictions/forecast?lat=40.758&lng=-73.9855&startTime=2099-01-01T00:00:00Z&endTime=2099-01-01T03:00:00Z');
+        assert.equal(unavailable.status, 503);
+        assert.equal(unavailable.body.error.code, 'PREDICTION_UNAVAILABLE');
+    });
 
-    try {
-        delete process.env.ML_API_BASE_URL;
-        await withTestServer({}, async (baseUrl) => {
-            const unavailable = await requestJson(baseUrl, '/api/v1/predictions/forecast?lat=40.758&lng=-73.9855&startTime=2099-01-01T00:00:00Z&endTime=2099-01-01T03:00:00Z');
-            assert.equal(unavailable.status, 503);
-            assert.equal(unavailable.body.error.code, 'PREDICTION_UNAVAILABLE');
-        });
+    await withTestServer({ emptyForecast: true }, async (baseUrl) => {
+        const empty = await requestJson(baseUrl, '/api/v1/predictions/forecast?lat=40.758&lng=-73.9855&startTime=2099-01-01T00:00:00Z&endTime=2099-01-01T03:00:00Z');
+        assert.equal(empty.status, 503);
+        assert.equal(empty.body.error.code, 'PREDICTION_UNAVAILABLE');
+    });
 
-        process.env.ML_API_BASE_URL = 'http://127.0.0.1:1';
-        await withTestServer({}, async (baseUrl) => {
-            const failing = await requestJson(baseUrl, '/api/v1/predictions/forecast?lat=40.758&lng=-73.9855&startTime=2099-01-01T00:00:00Z&endTime=2099-01-01T03:00:00Z&limit=2');
-            assert.equal(failing.status, 503);
-            assert.equal(failing.body.error.code, 'PREDICTION_UNAVAILABLE');
-        });
-    } finally {
-        if (originalBaseUrl === undefined) {
-            delete process.env.ML_API_BASE_URL;
-        } else {
-            process.env.ML_API_BASE_URL = originalBaseUrl;
-        }
-    }
+    await withTestServer({ throwForecast: true }, async (baseUrl) => {
+        const failing = await requestJson(baseUrl, '/api/v1/predictions/forecast?lat=40.758&lng=-73.9855&startTime=2099-01-01T00:00:00Z&endTime=2099-01-01T03:00:00Z');
+        assert.equal(failing.status, 500);
+    });
 });
-
 test('POST /recommendations validates input and handles failures', async () => {
     await withTestServer({}, async (baseUrl) => {
         const missing = await requestJson(baseUrl, '/api/v1/recommendations', { method: 'POST', body: JSON.stringify({}) });
