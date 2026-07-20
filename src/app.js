@@ -15,6 +15,7 @@ const feedbackRoutes = require('./routes/feedbackRoutes');
 const adminRoutes = require('./routes/adminRoutes');
 const chatRoutes = require('./routes/chatRoutes');
 const attractionRoutes = require('./routes/attractionRoutes');
+const savedItineraryRoutes = require('./routes/savedItineraryRoutes');
 
 const app = express();
 const clerkAuth = createClerkAuthMiddleware();
@@ -37,5 +38,6 @@ app.use('/api/v1/feedback', feedbackRoutes);
 app.use('/api/v1/admin', adminRoutes);
 // Chat is the public user entry point: Clerk session only, never the service token.
 app.use('/api/v1/chat', requireAuthenticatedUser, chatRoutes);
+app.use('/api/v1/saved-itineraries', requireAuthenticatedUser, savedItineraryRoutes);
 
 module.exports = app;
