@@ -1,61 +1,131 @@
-# Zentra Backend API Contract v1.0
+﻿# Zentra Backend API Contract v1.0
 
 Project: COMP47360 Team 10 - Zentra  
-Backend scope: Express.js API gateway, Supabase PostgreSQL data access, FastAPI ML integration, H3 grid prediction service, recommendation support, feedback logging, and admin statistics  
-Clients: Web frontend and SwiftUI mobile app  
-Last updated: 2026-07-07
+API version: v1  
+Base path: `/api/v1`  
+Last updated: 2026-07-20
 
 ## 1. Purpose
 
-This document defines the API surface owned by the Zentra backend.
+This document defines the backend API surface for Zentra. It describes the HTTP interface used by the web frontend, iOS mobile app, and trusted internal agent services.
 
-The backend is responsible for:
+The contract is independent of the backend's internal storage or implementation details. Clients depend on the API shape described here rather than database tables or downstream service schemas.
 
-- validating prediction, recommendation, feedback, and admin requests;
-- calling the FastAPI ML service when available;
-- reading fallback prediction data from Supabase PostgreSQL;
-- mapping coordinates to H3 grid prediction data;
-- returning crowd predictions, heatmap data, recommendations, feedback responses, and admin statistics;
-- logging prediction requests for later analysis.
+The backend API supports:
 
-Frontend and mobile clients resolve user-facing app flows and place search/geocoding before calling the backend with coordinates and time values.
+- Manhattan crowd prediction and future forecast;
+- crowd heatmap data for map views;
+- attraction discovery, nearby search, and detail views;
+- quieter-area and quieter-time recommendations;
+- AI chat and itinerary/recommendation agent gateway flows;
+- saved itineraries for authenticated users;
+- user feedback submission;
+- internal statistics for evaluation and monitoring.
 
-## 2. Architecture
-
-```text
-Web Frontend / Mobile App
-        |
-        v
-Express Backend API
-        |---------------------> FastAPI ML Service
-        |
-        v
-Supabase PostgreSQL
-```
-
-Express is the public API gateway. Frontend and mobile clients should call Express, not FastAPI or Supabase directly.
-
-## 3. Base URL
-
-```text
-Local API: http://localhost:3000/api/v1
-```
-
-All request and response bodies use JSON.
+All non-streaming endpoints use JSON.
 
 ```http
 Content-Type: application/json
 Accept: application/json
 ```
 
-Optional request headers:
+## 2. Authentication
+
+### Public Endpoints
+
+| Method | Path | Purpose |
+|---|---|---|
+| `GET` | `/health` | Liveness and database health check |
+| `POST` | `/feedback` | Submit user feedback |
+
+### Clerk User Endpoints
+
+These endpoints require a Clerk session token:
 
 ```http
-X-Request-Id: req_client_generated_uuid
-Accept-Language: en
+Authorization: Bearer <clerk_session_token>
 ```
 
-## 4. Shared Models
+| Method | Path | Purpose |
+|---|---|---|
+| `POST` | `/chat/stream` | Stream AI assistant responses |
+| `GET` | `/saved-itineraries` | List saved itineraries for the signed-in user |
+| `POST` | `/saved-itineraries` | Save a new itinerary for the signed-in user |
+| `DELETE` | `/saved-itineraries/:itineraryId` | Soft-delete a saved itinerary |
+| `PATCH` | `/saved-itineraries/:itineraryId/title` | Update itinerary title |
+| `PATCH` | `/saved-itineraries/:itineraryId/note` | Update itinerary note |
+| `PATCH` | `/saved-itineraries/:itineraryId/target-time` | Update itinerary target time |
+
+### User Or Internal Service Endpoints
+
+Capability endpoints require either a Clerk session token or a trusted internal service token:
+
+```http
+Authorization: Bearer <clerk_session_token>
+```
+
+or:
+
+```http
+X-Internal-Service-Token: <internal_service_token>
+```
+
+| Method | Path | Purpose |
+|---|---|---|
+| `POST` | `/predictions` | Single crowd prediction |
+| `POST` | `/predictions/batch` | Batch crowd predictions |
+| `GET` | `/predictions/forecast` | Future crowd forecast |
+| `POST` | `/predictions/explanation` | Prediction explanation |
+| `GET` | `/map/heatmap` | Crowd heatmap points |
+| `POST` | `/recommendations` | Quieter nearby areas |
+| `POST` | `/recommendations/quiet-times` | Quieter visit times |
+| `POST` | `/recommendations/places` | Rank candidate places |
+| `GET` | `/attractions` | List attractions |
+| `GET` | `/attractions/nearby` | Nearby attractions |
+| `GET` | `/attractions/search` | Search attractions |
+| `GET` | `/attractions/:attractionId` | Attraction detail |
+| `POST` | `/itinerary/plan` | Itinerary agent gateway |
+| `POST` | `/recommend` | Recommendation agent gateway |
+
+### Internal/Admin Endpoints
+
+Admin statistics endpoints are intended for internal team use and evaluation dashboards.
+
+| Method | Path | Purpose |
+|---|---|---|
+| `GET` | `/admin/stats/predictions` | Prediction usage statistics |
+| `GET` | `/admin/stats/feedback` | Feedback statistics |
+
+## 3. Response Envelope
+
+### Success
+
+```json
+{
+  "success": true,
+  "data": {},
+  "meta": {
+    "generatedAt": "2026-07-20T12:00:00.000Z"
+  }
+}
+```
+
+### Error
+
+```json
+{
+  "success": false,
+  "error": {
+    "code": "INVALID_QUERY",
+    "message": "targetTime is not a valid date-time string"
+  },
+  "meta": {
+    "generatedAt": "2026-07-20T12:00:00.000Z"
+  }
+}
+```
+
+## 4. Shared Types
 
 ### Coordinates
 
@@ -66,7 +136,7 @@ Accept-Language: en
 }
 ```
 
-Current coverage area: Manhattan.
+Crowd prediction, heatmap, and recommendation APIs cover Manhattan.
 
 ### Busyness Level
 
@@ -87,62 +157,56 @@ type BusynessLevel =
 | 61-80 | `busy` |
 | 81-100 | `very_busy` |
 
-### Common Success Response
+### Place Card Item
+
+Saved itineraries and agent place-card responses use this item shape where practical.
 
 ```json
 {
-  "success": true,
-  "data": {},
-  "meta": {
-    "generatedAt": "2026-07-07T12:00:00Z"
-  }
-}
-```
-
-### Common Error Response
-
-```json
-{
-  "success": false,
-  "error": {
-    "code": "INVALID_QUERY",
-    "message": "targetTime must be a valid date-time string"
-  },
-  "meta": {
-    "generatedAt": "2026-07-07T12:00:00Z"
-  }
+  "candidateId": "place_123",
+  "rank": 1,
+  "name": "Central Park",
+  "lat": 40.7812,
+  "lng": -73.9665,
+  "reason": "Predicted to be quieter than nearby alternatives.",
+  "subtitle": "Park · Upper Manhattan",
+  "detail": "Large urban park in Manhattan."
 }
 ```
 
 ## 5. Endpoint Summary
 
-| # | Method | Path | State | Purpose |
-|---:|---|---|---|---|
-| 1 | GET | `/health` | `IMPLEMENTED` | Service and database health |
-| 2 | POST | `/predictions` | `IMPLEMENTED` | Single coordinate crowd prediction |
-| 3 | POST | `/predictions/batch` | `IMPLEMENTED` | Batch coordinate crowd predictions |
-| 4 | GET | `/predictions/forecast` | `IMPLEMENTED` | Crowd forecast for one coordinate |
-| 5 | GET | `/map/heatmap` | `IMPLEMENTED` | H3 heatmap points for map display |
-| 6 | POST | `/recommendations` | `IMPLEMENTED` | Quieter nearby H3 area recommendations |
-| 7 | POST | `/predictions/explanation` | `IMPLEMENTED` | Backend-generated explanation for one prediction |
-| 8 | POST | `/recommendations/quiet-times` | `IMPLEMENTED` | Quieter time recommendations for one coordinate |
-| 9 | POST | `/recommendations/places` | `IMPLEMENTED` | Rank frontend-provided candidate places using crowd prediction data |
-| 10 | GET | `/poi/search` | `PLANNED_AFTER_POI_SOURCE` | Search POIs from the selected backend POI source/catalog |
-| 11 | GET | `/poi/{poiId}` | `PLANNED_AFTER_POI_SOURCE` | Get normalized POI details |
-| 12 | GET | `/poi/nearby` | `PLANNED_AFTER_POI_SOURCE` | Find nearby POIs around coordinates |
-| 13 | POST | `/itineraries` | `PLANNED_AFTER_POI_SOURCE` | Build a crowd-aware itinerary from candidate POIs |
-| 14 | POST | `/routes/crowd-aware` | `PLANNED_AFTER_MVP` | Route-level crowd scoring for frontend-provided route segments |
-| 15 | POST | `/events/impact` | `PLANNED_AFTER_MVP` | Estimate event impact on crowd predictions |
-| 16 | GET | `/alerts/crowd` | `PLANNED_AFTER_MVP` | Return crowd/event alerts for an area and time window |
-| 17 | POST | `/feedback` | `IMPLEMENTED` | Store user feedback about prediction usefulness |
-| 18 | GET | `/admin/stats/predictions` | `IMPLEMENTED` | Prediction request statistics |
-| 19 | GET | `/admin/stats/feedback` | `IMPLEMENTED` | Feedback analytics |
+| Method | Path | Purpose |
+|---|---|---|
+| `GET` | `/health` | Health check |
+| `POST` | `/predictions` | Predict crowd level for one coordinate and time |
+| `POST` | `/predictions/batch` | Predict crowd levels for multiple coordinates |
+| `GET` | `/predictions/forecast` | Return future forecast points for one coordinate |
+| `POST` | `/predictions/explanation` | Explain a prediction score |
+| `GET` | `/map/heatmap` | Return H3 heatmap points |
+| `GET` | `/attractions` | List attractions |
+| `GET` | `/attractions/nearby` | Find attractions near coordinates |
+| `GET` | `/attractions/search` | Search/filter attractions |
+| `GET` | `/attractions/:attractionId` | Get attraction detail |
+| `POST` | `/recommendations` | Recommend quieter nearby areas |
+| `POST` | `/recommendations/quiet-times` | Recommend quieter visit times |
+| `POST` | `/recommendations/places` | Rank candidate places by predicted crowd level |
+| `POST` | `/chat/stream` | Stream AI assistant output |
+| `POST` | `/itinerary/plan` | Plan an itinerary through the itinerary agent |
+| `POST` | `/recommend` | Request place recommendations through the agent |
+| `GET` | `/saved-itineraries` | List saved itineraries |
+| `POST` | `/saved-itineraries` | Save an itinerary |
+| `DELETE` | `/saved-itineraries/:itineraryId` | Soft-delete an itinerary |
+| `PATCH` | `/saved-itineraries/:itineraryId/title` | Update itinerary title |
+| `PATCH` | `/saved-itineraries/:itineraryId/note` | Update itinerary note |
+| `PATCH` | `/saved-itineraries/:itineraryId/target-time` | Update itinerary target time |
+| `POST` | `/feedback` | Submit feedback |
+| `GET` | `/admin/stats/predictions` | Prediction statistics |
+| `GET` | `/admin/stats/feedback` | Feedback statistics |
 
-## 6. Implemented Endpoints
+## 6. Health
 
-### 6.1 Health Check
-
-`GET /health`
+### GET `/health`
 
 Response `200`:
 
@@ -156,7 +220,7 @@ Response `200`:
     "uptimeSeconds": 3600
   },
   "meta": {
-    "generatedAt": "2026-07-07T12:00:00Z"
+    "generatedAt": "2026-07-20T12:00:00.000Z"
   }
 }
 ```
@@ -171,14 +235,14 @@ Response `503`:
     "message": "Database connection failed"
   },
   "meta": {
-    "generatedAt": "2026-07-07T12:00:00Z"
+    "generatedAt": "2026-07-20T12:00:00.000Z"
   }
 }
 ```
 
-### 6.2 Single Crowd Prediction
+## 7. Prediction APIs
 
-`POST /predictions`
+### POST `/predictions`
 
 Request:
 
@@ -186,7 +250,7 @@ Request:
 {
   "lat": 40.758,
   "lng": -73.9855,
-  "targetTime": "2026-07-01T16:30:00-04:00",
+  "targetTime": "2026-07-20T16:30:00-04:00",
   "durationMinutes": 60
 }
 ```
@@ -194,9 +258,9 @@ Request:
 Validation:
 
 - `lat`, `lng`, and `targetTime` are required.
-- `targetTime` must be a valid date-time string.
-- `durationMinutes` must be between 15 and 240 when provided.
-- Coordinates must be inside the supported Manhattan coverage area.
+- `targetTime` is a valid date-time string.
+- `durationMinutes` is between 15 and 240.
+- Coordinates are inside Manhattan coverage.
 
 Response `200`:
 
@@ -215,7 +279,7 @@ Response `200`:
         "lat": 40.7581,
         "lng": -73.9854
       },
-      "targetTime": "2026-07-01T16:30:00-04:00",
+      "targetTime": "2026-07-20T16:30:00-04:00",
       "durationMinutes": 60,
       "busynessScore": 82,
       "busynessLevel": "very_busy",
@@ -230,47 +294,28 @@ Response `200`:
   },
   "meta": {
     "modelVersion": "h3-grid-v0.1",
-    "generatedAt": "2026-07-07T12:00:00Z"
+    "generatedAt": "2026-07-20T12:00:00.000Z"
   }
 }
 ```
 
-Backend behavior:
-
-- Try FastAPI ML first when `ML_API_BASE_URL` is configured.
-- Fall back to Supabase `h3_grid_scores` when ML is unavailable.
-- Save the request to `prediction_requests`.
-
-### 6.3 Batch Crowd Prediction
-
-`POST /predictions/batch`
+### POST `/predictions/batch`
 
 Request:
 
 ```json
 {
-  "targetTime": "2026-07-01T16:30:00-04:00",
+  "targetTime": "2026-07-20T16:30:00-04:00",
   "durationMinutes": 60,
   "coordinates": [
     {
       "clientId": "times-square-card",
       "lat": 40.758,
       "lng": -73.9855
-    },
-    {
-      "clientId": "union-square-card",
-      "lat": 40.7359,
-      "lng": -73.9911
     }
   ]
 }
 ```
-
-Validation:
-
-- `coordinates` must contain 1 to 100 items.
-- Each item must include valid `lat` and `lng`.
-- `clientId` is optional and is echoed back when provided.
 
 Response `200`:
 
@@ -278,7 +323,7 @@ Response `200`:
 {
   "success": true,
   "data": {
-    "targetTime": "2026-07-01T16:30:00-04:00",
+    "targetTime": "2026-07-20T16:30:00-04:00",
     "durationMinutes": 60,
     "predictions": [
       {
@@ -288,10 +333,6 @@ Response `200`:
         "coordinates": {
           "lat": 40.758,
           "lng": -73.9855
-        },
-        "matchedCoordinates": {
-          "lat": 40.7581,
-          "lng": -73.9854
         },
         "busynessScore": 82,
         "busynessLevel": "very_busy",
@@ -307,14 +348,12 @@ Response `200`:
   "meta": {
     "count": 1,
     "warningCount": 0,
-    "generatedAt": "2026-07-07T12:00:00Z"
+    "generatedAt": "2026-07-20T12:00:00.000Z"
   }
 }
 ```
 
-### 6.4 Coordinate Forecast
-
-`GET /predictions/forecast?lat={lat}&lng={lng}&startTime={iso}&endTime={iso}&limit={limit}`
+### GET `/predictions/forecast`
 
 Query parameters:
 
@@ -323,8 +362,8 @@ Query parameters:
 | `lat` | yes | - | Latitude |
 | `lng` | yes | - | Longitude |
 | `startTime` | yes | - | Valid date-time string |
-| `endTime` | yes | - | Valid date-time string |
-| `limit` | no | 24 | Max 100 |
+| `endTime` | yes | - | Valid future date-time string after `startTime` |
+| `limit` | no | 6 | Max 24 |
 
 Response `200`:
 
@@ -337,34 +376,72 @@ Response `200`:
       "lat": 40.758,
       "lng": -73.9855
     },
-    "startTime": "2026-07-01T00:00:00-04:00",
-    "endTime": "2026-07-02T00:00:00-04:00",
+    "startTime": "2026-07-20T12:00:00-04:00",
+    "endTime": "2026-07-20T18:00:00-04:00",
     "forecast": [
       {
-        "timestamp": "2026-07-01T16:30:00-04:00",
+        "timestamp": "2026-07-20T13:00:00-04:00",
         "period": "PM",
-        "busynessScore": 82,
-        "busynessLevel": "very_busy",
-        "pedestriansPredicted": 3067.3
+        "busynessScore": 54,
+        "busynessLevel": "moderate",
+        "pedestriansPredicted": 1450.2,
+        "source": "h3_grid_scores"
       }
     ]
   },
   "meta": {
     "count": 1,
-    "generatedAt": "2026-07-07T12:00:00Z"
+    "source": "h3_grid_scores",
+    "generatedAt": "2026-07-20T12:00:00.000Z"
   }
 }
 ```
 
-### 6.5 Map Heatmap
+### POST `/predictions/explanation`
 
-`GET /map/heatmap?targetTime={iso}&limit={limit}&source={source}`
+Request:
+
+```json
+{
+  "lat": 40.758,
+  "lng": -73.9855,
+  "targetTime": "2026-07-20T16:30:00-04:00",
+  "busynessScore": 82,
+  "period": "PM"
+}
+```
+
+Response `200`:
+
+```json
+{
+  "success": true,
+  "data": {
+    "explanation": {
+      "summary": "This area is expected to be very busy during the PM period.",
+      "reasons": [
+        "The predicted crowd score is in the highest range.",
+        "Nearby transit, visitor activity, or POI density may increase foot traffic."
+      ],
+      "suggestedAction": "Consider changing the time or choosing a quieter nearby area.",
+      "disclaimer": "This is a model prediction, not a live crowd count."
+    }
+  },
+  "meta": {
+    "generatedAt": "2026-07-20T12:00:00.000Z"
+  }
+}
+```
+
+## 8. Heatmap API
+
+### GET `/map/heatmap`
 
 Query parameters:
 
 | Name | Required | Default | Notes |
 |---|---:|---|---|
-| `targetTime` | no | current time | Valid date-time string |
+| `targetTime` | no | Current server time | Valid date-time string |
 | `limit` | no | 100 | Max 524 |
 | `source` | no | `auto` | `auto`, `ml`, or `database` |
 
@@ -374,8 +451,8 @@ Response `200`:
 {
   "success": true,
   "data": {
-    "targetTime": "2026-07-01T16:30:00-04:00",
-    "source": "h3_grid_scores",
+    "targetTime": "2026-07-20T16:30:00-04:00",
+    "source": "heatmap_predictions",
     "points": [
       {
         "h3Cell": "892a1008807ffff",
@@ -384,26 +461,170 @@ Response `200`:
           "lng": -73.9725090299033
         },
         "period": "PM",
-        "queryTimestamp": "2026-07-01T16:30:00-04:00",
+        "queryTimestamp": "2026-07-20T16:30:00-04:00",
         "crowdScore": 53,
         "crowdLevel": "moderate",
         "crowdCategory": "Moderate",
         "pedestriansPredicted": 3399.1,
-        "poiTotal": 42,
-        "source": "h3_grid_scores"
+        "source": "heatmap_predictions"
       }
     ]
   },
   "meta": {
     "count": 1,
-    "generatedAt": "2026-07-07T12:00:00Z"
+    "generatedAt": "2026-07-20T12:00:00.000Z"
   }
 }
 ```
 
-### 6.6 Quieter Area Recommendations
+## 9. Attraction APIs
 
-`POST /recommendations`
+Attraction responses may include a `crowd` object when recent prediction data is available.
+
+### GET `/attractions`
+
+Query parameters:
+
+| Name | Required | Default | Notes |
+|---|---:|---|---|
+| `limit` | no | 524 | Max 524 |
+
+Response `200`:
+
+```json
+{
+  "success": true,
+  "data": {
+    "attractions": [
+      {
+        "id": 1,
+        "name": "Central Park",
+        "category": "Park",
+        "neighborhood": "Upper Manhattan",
+        "description": "Large urban park in Manhattan.",
+        "lat": 40.7812,
+        "lng": -73.9665,
+        "crowd": {
+          "score": 32,
+          "level": "quiet",
+          "predictedFor": "2026-07-20T16:30:00-04:00"
+        }
+      }
+    ]
+  },
+  "meta": {
+    "count": 1,
+    "generatedAt": "2026-07-20T12:00:00.000Z"
+  }
+}
+```
+
+### GET `/attractions/nearby`
+
+Query parameters:
+
+| Name | Required | Default | Notes |
+|---|---:|---|---|
+| `lat` | yes | - | Latitude |
+| `lng` | yes | - | Longitude |
+| `limit` | no | 20 | Max 50 |
+
+Response `200`:
+
+```json
+{
+  "success": true,
+  "data": {
+    "attractions": [
+      {
+        "id": 1,
+        "name": "Central Park",
+        "category": "Park",
+        "neighborhood": "Upper Manhattan",
+        "description": "Large urban park in Manhattan.",
+        "lat": 40.7812,
+        "lng": -73.9665,
+        "distanceMeters": 520
+      }
+    ]
+  },
+  "meta": {
+    "count": 1,
+    "generatedAt": "2026-07-20T12:00:00.000Z"
+  }
+}
+```
+
+### GET `/attractions/search`
+
+Query parameters:
+
+| Name | Required | Default | Notes |
+|---|---:|---|---|
+| `q` | no | - | Search text matched against name, description, or neighborhood |
+| `category` | no | - | Category filter |
+| `lat` | no | - | Optional latitude for distance sorting |
+| `lng` | no | - | Optional longitude for distance sorting |
+| `limit` | no | 20 | Max 50 |
+
+Response `200`:
+
+```json
+{
+  "success": true,
+  "data": {
+    "attractions": [
+      {
+        "id": 1,
+        "name": "Central Park",
+        "category": "Park",
+        "neighborhood": "Upper Manhattan",
+        "description": "Large urban park in Manhattan.",
+        "lat": 40.7812,
+        "lng": -73.9665,
+        "distanceMeters": 520
+      }
+    ]
+  },
+  "meta": {
+    "count": 1,
+    "generatedAt": "2026-07-20T12:00:00.000Z"
+  }
+}
+```
+
+### GET `/attractions/:attractionId`
+
+Response `200`:
+
+```json
+{
+  "success": true,
+  "data": {
+    "attraction": {
+      "id": 1,
+      "name": "Central Park",
+      "category": "Park",
+      "neighborhood": "Upper Manhattan",
+      "description": "Large urban park in Manhattan.",
+      "lat": 40.7812,
+      "lng": -73.9665,
+      "crowd": {
+        "score": 32,
+        "level": "quiet",
+        "predictedFor": "2026-07-20T16:30:00-04:00"
+      }
+    }
+  },
+  "meta": {
+    "generatedAt": "2026-07-20T12:00:00.000Z"
+  }
+}
+```
+
+## 10. Recommendation APIs
+
+### POST `/recommendations`
 
 Request:
 
@@ -411,7 +632,7 @@ Request:
 {
   "lat": 40.758,
   "lng": -73.9855,
-  "targetTime": "2026-07-01T16:30:00-04:00",
+  "targetTime": "2026-07-20T16:30:00-04:00",
   "limit": 5
 }
 ```
@@ -422,7 +643,7 @@ Response `200`:
 {
   "success": true,
   "data": {
-    "targetTime": "2026-07-01T16:30:00-04:00",
+    "targetTime": "2026-07-20T16:30:00-04:00",
     "recommendations": [
       {
         "type": "quieter_area",
@@ -435,20 +656,418 @@ Response `200`:
         "busynessLevel": "quiet",
         "pedestriansPredicted": 920.4,
         "period": "PM",
-        "reason": "This nearby H3 area has a lower predicted crowd score."
+        "reason": "This nearby grid cell has a lower predicted crowd score."
       }
     ]
   },
   "meta": {
     "count": 1,
-    "generatedAt": "2026-07-07T12:00:00Z"
+    "generatedAt": "2026-07-20T12:00:00.000Z"
   }
 }
 ```
 
-### 6.7 Submit Feedback
+### POST `/recommendations/quiet-times`
 
-`POST /feedback`
+Request:
+
+```json
+{
+  "lat": 40.758,
+  "lng": -73.9855,
+  "targetTime": "2026-07-20T16:30:00-04:00",
+  "startTime": "2026-07-20T09:00:00-04:00",
+  "endTime": "2026-07-20T21:00:00-04:00",
+  "limit": 3
+}
+```
+
+Response `200`:
+
+```json
+{
+  "success": true,
+  "data": {
+    "original": {
+      "targetTime": "2026-07-20T16:30:00-04:00",
+      "busynessScore": 86,
+      "busynessLevel": "very_busy"
+    },
+    "quietTimes": [
+      {
+        "targetTime": "2026-07-20T10:00:00-04:00",
+        "busynessScore": 42,
+        "busynessLevel": "moderate",
+        "confidence": 0.6,
+        "reason": "Predicted crowd score is lower than the selected time."
+      }
+    ]
+  },
+  "meta": {
+    "count": 1,
+    "generatedAt": "2026-07-20T12:00:00.000Z"
+  }
+}
+```
+
+### POST `/recommendations/places`
+
+Request:
+
+```json
+{
+  "currentLocation": {
+    "lat": 40.758,
+    "lng": -73.9855
+  },
+  "targetTime": "2026-07-20T16:30:00-04:00",
+  "candidatePlaces": [
+    {
+      "placeId": "poi_1",
+      "name": "Central Park",
+      "category": "park",
+      "coordinates": {
+        "lat": 40.7812,
+        "lng": -73.9665
+      },
+      "source": "frontend_place_provider"
+    }
+  ],
+  "limit": 5
+}
+```
+
+Response `200`:
+
+```json
+{
+  "success": true,
+  "data": {
+    "targetTime": "2026-07-20T16:30:00-04:00",
+    "recommendations": [
+      {
+        "type": "candidate_place",
+        "rank": 1,
+        "place": {
+          "placeId": "poi_1",
+          "name": "Central Park",
+          "category": "park",
+          "coordinates": {
+            "lat": 40.7812,
+            "lng": -73.9665
+          },
+          "source": "frontend_place_provider"
+        },
+        "prediction": {
+          "h3Cell": "892a10089abffff",
+          "targetTime": "2026-07-20T16:30:00-04:00",
+          "busynessScore": 44,
+          "busynessLevel": "moderate",
+          "confidence": 0.6,
+          "source": "h3_grid_scores"
+        },
+        "distanceMeters": 2400,
+        "reason": "This candidate place is ranked using its predicted crowd score and distance from the current location."
+      }
+    ],
+    "warnings": []
+  },
+  "meta": {
+    "count": 1,
+    "warningCount": 0,
+    "generatedAt": "2026-07-20T12:00:00.000Z"
+  }
+}
+```
+
+## 11. Agent Gateway APIs
+
+### POST `/chat/stream`
+
+Authentication: Clerk user token only.
+
+Request:
+
+```json
+{
+  "message": "Plan a quieter afternoon near Central Park.",
+  "clientType": "web",
+  "conversationId": "conv_123",
+  "requestId": "req_123",
+  "lat": 40.7812,
+  "lng": -73.9665
+}
+```
+
+Response `200`:
+
+```http
+Content-Type: text/event-stream
+```
+
+The response body is a Server-Sent Events stream.
+
+### POST `/itinerary/plan`
+
+Request:
+
+```json
+{
+  "user_id": "user_123",
+  "anchor_place": "Central Park",
+  "anchor_time": "2026-07-20T10:00:00",
+  "duration_hours": 8,
+  "additional_context": "We have a stroller and prefer quieter places."
+}
+```
+
+Response `200`:
+
+```json
+{
+  "success": true,
+  "data": {
+    "itinerary": {}
+  },
+  "meta": {
+    "generatedAt": "2026-07-20T12:00:00.000Z"
+  }
+}
+```
+
+### POST `/recommend`
+
+Request:
+
+```json
+{
+  "user_id": "user_123",
+  "query": "Find quieter attractions near Central Park",
+  "lat": 40.7812,
+  "lng": -73.9665,
+  "target_time": "2026-07-20T14:00:00"
+}
+```
+
+Response `200`:
+
+```json
+{
+  "success": true,
+  "data": {
+    "recommendations": []
+  },
+  "meta": {
+    "generatedAt": "2026-07-20T12:00:00.000Z"
+  }
+}
+```
+
+## 12. Saved Itinerary APIs
+
+Saved itinerary APIs are scoped to the authenticated Clerk user. Ownership is derived from the verified Clerk user id on the request; clients do not send or control the owner user id.
+
+### GET `/saved-itineraries`
+
+Response `200`:
+
+```json
+{
+  "success": true,
+  "data": {
+    "itineraries": [
+      {
+        "id": "uuid",
+        "title": "Quiet afternoon in Central Park",
+        "source": "itinerary",
+        "items": [
+          {
+            "candidateId": "place_123",
+            "rank": 1,
+            "name": "Central Park",
+            "lat": 40.7812,
+            "lng": -73.9665,
+            "reason": "Lower predicted crowd level in this time window.",
+            "subtitle": "Park · Upper Manhattan",
+            "detail": "Large urban park in Manhattan."
+          }
+        ],
+        "description": "A calmer route around Central Park.",
+        "note": null,
+        "targetTime": "2026-07-20T14:00:00",
+        "conversationId": "conv_123",
+        "createdAt": "2026-07-20T12:00:00.000Z"
+      }
+    ]
+  },
+  "meta": {
+    "count": 1,
+    "generatedAt": "2026-07-20T12:00:00.000Z"
+  }
+}
+```
+
+### POST `/saved-itineraries`
+
+Request:
+
+```json
+{
+  "source": "itinerary",
+  "items": [
+    {
+      "candidateId": "place_123",
+      "rank": 1,
+      "name": "Central Park",
+      "lat": 40.7812,
+      "lng": -73.9665,
+      "reason": "Lower predicted crowd level in this time window.",
+      "subtitle": "Park · Upper Manhattan",
+      "detail": "Large urban park in Manhattan."
+    }
+  ],
+  "description": "A calmer route around Central Park.",
+  "title": "Quiet afternoon in Central Park",
+  "conversationId": "conv_123",
+  "targetTime": "2026-07-20T14:00"
+}
+```
+
+Validation:
+
+- `source` is one of `nearby`, `attractions`, `recommend`, `itinerary`, or `mixed`.
+- `items` contains 1 to 50 place-card items.
+- `title` is optional and is at most 120 characters.
+- `description` is optional and should be truncated or rejected above 1000 characters.
+- `targetTime` may be `null` or a valid date-time string.
+
+Response `201`:
+
+```json
+{
+  "success": true,
+  "data": {
+    "itinerary": {
+      "id": "uuid",
+      "title": "Quiet afternoon in Central Park",
+      "source": "itinerary",
+      "items": [],
+      "description": "A calmer route around Central Park.",
+      "note": null,
+      "targetTime": "2026-07-20T14:00:00",
+      "conversationId": "conv_123",
+      "createdAt": "2026-07-20T12:00:00.000Z"
+    }
+  },
+  "meta": {
+    "generatedAt": "2026-07-20T12:00:00.000Z"
+  }
+}
+```
+
+### DELETE `/saved-itineraries/:itineraryId`
+
+Response `200`:
+
+```json
+{
+  "success": true,
+  "data": {
+    "deleted": true
+  },
+  "meta": {
+    "generatedAt": "2026-07-20T12:00:00.000Z"
+  }
+}
+```
+
+### PATCH `/saved-itineraries/:itineraryId/title`
+
+Request:
+
+```json
+{
+  "title": "Updated itinerary title"
+}
+```
+
+Response `200`:
+
+```json
+{
+  "success": true,
+  "data": {
+    "updated": true,
+    "title": "Updated itinerary title"
+  },
+  "meta": {
+    "generatedAt": "2026-07-20T12:00:00.000Z"
+  }
+}
+```
+
+### PATCH `/saved-itineraries/:itineraryId/note`
+
+Request:
+
+```json
+{
+  "note": "Bring water."
+}
+```
+
+Response `200`:
+
+```json
+{
+  "success": true,
+  "data": {
+    "updated": true,
+    "note": "Bring water."
+  },
+  "meta": {
+    "generatedAt": "2026-07-20T12:00:00.000Z"
+  }
+}
+```
+
+### PATCH `/saved-itineraries/:itineraryId/target-time`
+
+Request:
+
+```json
+{
+  "targetTime": "2026-07-20T15:30"
+}
+```
+
+Response `200`:
+
+```json
+{
+  "success": true,
+  "data": {
+    "updated": true,
+    "targetTime": "2026-07-20T15:30:00"
+  },
+  "meta": {
+    "generatedAt": "2026-07-20T12:00:00.000Z"
+  }
+}
+```
+
+Saved itinerary errors:
+
+| HTTP | Code |
+|---:|---|
+| 400 | `INVALID_ITINERARY` |
+| 401 | `UNAUTHORIZED` |
+| 404 | `NOT_FOUND` |
+| 500 | `INTERNAL_ERROR` |
+
+## 13. Feedback API
+
+### POST `/feedback`
 
 Request:
 
@@ -464,7 +1083,7 @@ Request:
 
 Validation:
 
-- `rating` must be an integer from 1 to 5.
+- `rating` is an integer from 1 to 5.
 - `userId`, `h3Cell`, `wasUseful`, and `comment` are optional.
 
 Response `201`:
@@ -474,24 +1093,24 @@ Response `201`:
   "success": true,
   "data": {
     "feedback": {
-      "id": "1",
+      "id": 1,
       "userId": "optional_user_id",
       "h3Cell": "892a100d67bffff",
       "rating": 5,
       "wasUseful": true,
       "comment": "The prediction was useful.",
-      "createdAt": "2026-07-07T12:00:00Z"
+      "createdAt": "2026-07-20T12:00:00.000Z"
     }
   },
   "meta": {
-    "generatedAt": "2026-07-07T12:00:00Z"
+    "generatedAt": "2026-07-20T12:00:00.000Z"
   }
 }
 ```
 
-### 6.8 Admin Prediction Statistics
+## 14. Admin Statistics APIs
 
-`GET /admin/stats/predictions?startDate={iso}&endDate={iso}`
+### GET `/admin/stats/predictions`
 
 Query parameters:
 
@@ -523,136 +1142,19 @@ Response `200`:
   "meta": {
     "startDate": null,
     "endDate": null,
-    "generatedAt": "2026-07-07T12:00:00Z"
+    "generatedAt": "2026-07-20T12:00:00.000Z"
   }
 }
 ```
 
-## 7. Additional Backend Endpoints
+### GET `/admin/stats/feedback`
 
-### 7.1 Quieter Time Recommendations
+Query parameters:
 
-`POST /recommendations/quiet-times`
-
-Purpose: recommend lower-crowd times for the same coordinate within a client-provided time window.
-
-Request:
-
-```json
-{
-  "lat": 40.758,
-  "lng": -73.9855,
-  "targetTime": "2026-07-01T16:30:00-04:00",
-  "startTime": "2026-07-01T09:00:00-04:00",
-  "endTime": "2026-07-01T21:00:00-04:00",
-  "limit": 3
-}
-```
-
-Response `200`:
-
-```json
-{
-  "success": true,
-  "data": {
-    "original": {
-      "targetTime": "2026-07-01T16:30:00-04:00",
-      "busynessScore": 86,
-      "busynessLevel": "very_busy"
-    },
-    "quietTimes": [
-      {
-        "targetTime": "2026-07-01T10:00:00-04:00",
-        "busynessScore": 42,
-        "busynessLevel": "moderate",
-        "confidence": 0.68,
-        "reason": "Predicted crowd score is lower earlier in the day."
-      }
-    ]
-  },
-  "meta": {
-    "generatedAt": "2026-07-07T12:00:00Z"
-  }
-}
-```
-
-### 7.2 Candidate Place Recommendations
-
-`POST /recommendations/places`
-
-Purpose: rank candidate places that the frontend has already resolved through its own place search or geocoding provider. This endpoint does not require a backend POI catalog.
-
-Request:
-
-```json
-{
-  "currentLocation": {
-    "lat": 40.758,
-    "lng": -73.9855
-  },
-  "targetTime": "2026-07-01T16:30:00-04:00",
-  "candidatePlaces": [
-    {
-      "placeId": "poi_1",
-      "name": "Central Park",
-      "category": "park",
-      "coordinates": {
-        "lat": 40.7812,
-        "lng": -73.9665
-      },
-      "source": "frontend_place_provider"
-    }
-  ],
-  "limit": 5
-}
-```
-
-Response `200`:
-
-```json
-{
-  "success": true,
-  "data": {
-    "targetTime": "2026-07-01T16:30:00-04:00",
-    "recommendations": [
-      {
-        "type": "candidate_place",
-        "rank": 1,
-        "place": {
-          "placeId": "poi_1",
-          "name": "Central Park",
-          "category": "park",
-          "coordinates": {
-            "lat": 40.7812,
-            "lng": -73.9665
-          },
-          "source": "frontend_place_provider"
-        },
-        "prediction": {
-          "h3Cell": "892a10089abffff",
-          "busynessScore": 44,
-          "busynessLevel": "moderate",
-          "confidence": 0.7,
-          "source": "h3_grid_scores"
-        },
-        "distanceMeters": 2400,
-        "reason": "This place is predicted to be less crowded than the current area."
-      }
-    ],
-    "warnings": []
-  },
-  "meta": {
-    "count": 1,
-    "generatedAt": "2026-07-07T12:00:00Z"
-  }
-}
-```
-
-### 7.3 Admin Feedback Statistics
-
-`GET /admin/stats/feedback?startDate={iso}&endDate={iso}`
-
-Purpose: summarize feedback quality and usefulness by time range and H3 cell.
+| Name | Required | Default | Notes |
+|---|---:|---|---|
+| `startDate` | no | all time | Valid date-time string |
+| `endDate` | no | all time | Valid date-time string |
 
 Response `200`:
 
@@ -678,434 +1180,35 @@ Response `200`:
         "rating": 5,
         "wasUseful": true,
         "comment": "The prediction was useful.",
-        "createdAt": "2026-07-07T12:00:00Z"
+        "createdAt": "2026-07-20T12:00:00.000Z"
       }
     ]
   },
   "meta": {
     "startDate": null,
     "endDate": null,
-    "generatedAt": "2026-07-07T12:00:00Z"
+    "generatedAt": "2026-07-20T12:00:00.000Z"
   }
 }
 ```
 
-### 7.4 Crowd-Aware Route Scoring
-
-`POST /routes/crowd-aware`
-
-Purpose: score route segments supplied by the frontend or routing provider. The backend does not generate the route geometry.
-
-Request:
-
-```json
-{
-  "targetTime": "2026-07-01T16:30:00-04:00",
-  "routes": [
-    {
-      "routeId": "route_1",
-      "transportMode": "walk",
-      "segments": [
-        {
-          "order": 1,
-          "start": {
-            "lat": 40.758,
-            "lng": -73.9855
-          },
-          "end": {
-            "lat": 40.765,
-            "lng": -73.98
-          }
-        }
-      ]
-    }
-  ]
-}
-```
-
-Response `200`:
-
-```json
-{
-  "success": true,
-  "data": {
-    "routes": [
-      {
-        "routeId": "route_1",
-        "transportMode": "walk",
-        "overallCrowdScore": 58,
-        "overallCrowdLevel": "moderate",
-        "segments": [
-          {
-            "order": 1,
-            "crowdScore": 72,
-            "crowdLevel": "busy",
-            "h3Cells": ["892a100d67bffff"]
-          }
-        ],
-        "reason": "This route crosses some busy H3 areas."
-      }
-    ]
-  },
-  "meta": {
-    "generatedAt": "2026-07-07T12:00:00Z"
-  }
-}
-```
-
-### 7.5 Prediction Explanation
-
-`POST /predictions/explanation`
-
-Purpose: generate structured explanation text for one prediction result that clients may display in their own UI.
-
-Request:
-
-```json
-{
-  "lat": 40.758,
-  "lng": -73.9855,
-  "targetTime": "2026-07-01T16:30:00-04:00",
-  "h3Cell": "892a100d67bffff",
-  "busynessScore": 82,
-  "busynessLevel": "very_busy",
-  "period": "PM",
-  "language": "en"
-}
-```
-
-Response `200`:
-
-```json
-{
-  "success": true,
-  "data": {
-    "explanation": {
-      "summary": "This area is expected to be very busy at the selected time.",
-      "reasons": [
-        "The selected time period usually has high activity.",
-        "Nearby transit, visitor activity, or POI density may increase foot traffic."
-      ],
-      "suggestedAction": "Consider a quieter nearby area or a different time.",
-      "disclaimer": "This is a model prediction, not a live crowd count."
-    }
-  },
-  "meta": {
-    "generatedAt": "2026-07-07T12:00:00Z"
-  }
-}
-```
-
-### 7.6 POI Search
-
-`GET /poi/search?q={query}&category={category}&lat={lat}&lng={lng}&limit={limit}`
-
-Purpose: search POIs from the selected backend POI source or cached POI catalog once that source is confirmed.
-
-Response `200`:
-
-```json
-{
-  "success": true,
-  "data": {
-    "query": "museum",
-    "pois": [
-      {
-        "poiId": "poi_1",
-        "name": "Museum of Modern Art",
-        "category": "museum",
-        "coordinates": {
-          "lat": 40.7614,
-          "lng": -73.9776
-        },
-        "source": "poi_provider",
-        "address": "11 W 53rd St, New York, NY"
-      }
-    ]
-  },
-  "meta": {
-    "count": 1,
-    "generatedAt": "2026-07-07T12:00:00Z"
-  }
-}
-```
-
-### 7.7 POI Detail
-
-`GET /poi/{poiId}`
-
-Purpose: return normalized POI details from the selected POI source or cached POI catalog.
-
-Response `200`:
-
-```json
-{
-  "success": true,
-  "data": {
-    "poi": {
-      "poiId": "poi_1",
-      "name": "Museum of Modern Art",
-      "category": "museum",
-      "coordinates": {
-        "lat": 40.7614,
-        "lng": -73.9776
-      },
-      "source": "poi_provider",
-      "address": "11 W 53rd St, New York, NY",
-      "openingHours": null,
-      "accessibility": null
-    }
-  },
-  "meta": {
-    "generatedAt": "2026-07-07T12:00:00Z"
-  }
-}
-```
-
-### 7.8 Nearby POIs
-
-`GET /poi/nearby?lat={lat}&lng={lng}&radiusMeters={radiusMeters}&category={category}&limit={limit}`
-
-Purpose: return POIs near a coordinate after the backend POI source is available.
-
-Response `200`:
-
-```json
-{
-  "success": true,
-  "data": {
-    "origin": {
-      "lat": 40.758,
-      "lng": -73.9855
-    },
-    "pois": [
-      {
-        "poiId": "poi_1",
-        "name": "Bryant Park",
-        "category": "park",
-        "coordinates": {
-          "lat": 40.7536,
-          "lng": -73.9832
-        },
-        "distanceMeters": 520,
-        "source": "poi_provider"
-      }
-    ]
-  },
-  "meta": {
-    "count": 1,
-    "generatedAt": "2026-07-07T12:00:00Z"
-  }
-}
-```
-
-### 7.9 Crowd-Aware Itinerary
-
-`POST /itineraries`
-
-Purpose: build a timed itinerary from candidate places, crowd predictions, travel-time assumptions, and user-selected constraints supplied by the client.
-
-Request:
-
-```json
-{
-  "startLocation": {
-    "lat": 40.758,
-    "lng": -73.9855
-  },
-  "startTime": "2026-07-01T10:00:00-04:00",
-  "endTime": "2026-07-01T16:00:00-04:00",
-  "candidatePlaces": [
-    {
-      "poiId": "poi_1",
-      "name": "Museum of Modern Art",
-      "category": "museum",
-      "coordinates": {
-        "lat": 40.7614,
-        "lng": -73.9776
-      }
-    }
-  ],
-  "constraints": {
-    "maxStops": 5,
-    "avoidVeryBusy": true,
-    "transportModes": ["walk", "transit"]
-  }
-}
-```
-
-Response `200`:
-
-```json
-{
-  "success": true,
-  "data": {
-    "itinerary": {
-      "itineraryId": "itin_123",
-      "summary": "A crowd-aware Manhattan plan for the selected time window.",
-      "stops": [
-        {
-          "order": 1,
-          "arrivalTime": "2026-07-01T10:00:00-04:00",
-          "departureTime": "2026-07-01T11:30:00-04:00",
-          "place": {
-            "poiId": "poi_1",
-            "name": "Museum of Modern Art"
-          },
-          "prediction": {
-            "busynessScore": 48,
-            "busynessLevel": "moderate",
-            "h3Cell": "892a100d2d7ffff"
-          },
-          "reason": "This stop is predicted to be less crowded during the selected window."
-        }
-      ],
-      "warnings": []
-    }
-  },
-  "meta": {
-    "generatedAt": "2026-07-07T12:00:00Z"
-  }
-}
-```
-
-### 7.10 Event Impact
-
-`POST /events/impact`
-
-Purpose: estimate how known events may affect crowd prediction for an area and time.
-
-Request:
-
-```json
-{
-  "lat": 40.758,
-  "lng": -73.9855,
-  "targetTime": "2026-07-01T16:30:00-04:00",
-  "radiusMeters": 1000
-}
-```
-
-Response `200`:
-
-```json
-{
-  "success": true,
-  "data": {
-    "impact": {
-      "level": "medium",
-      "scoreAdjustment": 8,
-      "events": [
-        {
-          "eventId": "event_1",
-          "name": "Concert near Times Square",
-          "startTime": "2026-07-01T18:00:00-04:00",
-          "distanceMeters": 650
-        }
-      ],
-      "reason": "Nearby events may increase foot traffic around the selected time."
-    }
-  },
-  "meta": {
-    "generatedAt": "2026-07-07T12:00:00Z"
-  }
-}
-```
-
-### 7.11 Crowd Alerts
-
-`GET /alerts/crowd?lat={lat}&lng={lng}&startTime={iso}&endTime={iso}&radiusMeters={radiusMeters}`
-
-Purpose: return crowd and event alerts for a user-selected area and time window.
-
-Response `200`:
-
-```json
-{
-  "success": true,
-  "data": {
-    "alerts": [
-      {
-        "alertId": "alert_1",
-        "type": "high_crowd_prediction",
-        "severity": "warning",
-        "title": "Very busy period expected",
-        "message": "This area is predicted to be very busy during the selected time window.",
-        "h3Cell": "892a100d67bffff",
-        "startTime": "2026-07-01T16:00:00-04:00",
-        "endTime": "2026-07-01T18:00:00-04:00"
-      }
-    ]
-  },
-  "meta": {
-    "count": 1,
-    "generatedAt": "2026-07-07T12:00:00Z"
-  }
-}
-```
-## 8. Internal ML Integration
-
-Frontend and mobile clients do not call FastAPI directly.
-
-Express uses this environment variable to call the ML service:
-
-```text
-ML_API_BASE_URL=http://localhost:8000
-```
-
-Current ML endpoints consumed by Express:
-
-```text
-POST /predict/crowd
-POST /predict/future
-GET  /predict/crowd-score
-```
-
-Expected ML prediction fields:
-
-```json
-{
-  "h3_cell": "892a100d67bffff",
-  "lat": 40.758,
-  "lon": -73.9855,
-  "timestamp": "2026-07-01T16:30:00-04:00",
-  "period": "PM",
-  "crowd_score": 0.82,
-  "crowd_category": "Very Busy",
-  "pedestrians": 3067.3
-}
-```
-
-## 9. Supabase PostgreSQL Usage
-
-The backend uses Supabase as a hosted PostgreSQL database through the `pg` driver and `DATABASE_URL` connection string.
-
-Current backend-owned tables:
-
-| Table | Backend usage |
-|---|---|
-| `h3_grid_scores` | Read prediction fallback, forecast, heatmap, and recommendation data |
-| `h3_grid_cells` | Read H3 cell centroids for ML heatmap requests |
-| `prediction_requests` | Insert prediction request logs and read admin prediction statistics |
-| `feedback` | Insert user feedback and read feedback statistics |
-
-Supabase is used as database infrastructure only. The backend does not expose Supabase keys to frontend or mobile clients.
-
-## 10. Error Codes
+## 15. Error Codes
 
 | Code | HTTP | Meaning |
 |---|---:|---|
+| `UNAUTHORIZED` | 401 | Authentication is missing or invalid |
 | `DATABASE_UNAVAILABLE` | 503 | Database connection failed |
 | `INVALID_QUERY` | 400/422 | Missing or invalid request fields |
 | `INVALID_COORDINATES` | 422 | Latitude/longitude invalid |
 | `LOCATION_OUT_OF_COVERAGE` | 422 | Coordinate outside Manhattan coverage |
-| `PREDICTION_UNAVAILABLE` | 503 | No ML or fallback prediction available |
-| `ML_API_UNAVAILABLE` | 503 | FastAPI ML service unavailable |
-| `INVALID_RATING` | 422 | Feedback rating must be 1-5 |
+| `PREDICTION_UNAVAILABLE` | 503 | Prediction, forecast, or recommendation data is unavailable |
+| `ML_API_UNAVAILABLE` | 503 | ML service is unavailable |
+| `INVALID_RATING` | 422 | Feedback rating is outside 1-5 |
+| `ATTRACTION_NOT_FOUND` | 404 | Attraction id was not found |
+| `INVALID_ITINERARY` | 400 | Saved itinerary payload is invalid |
+| `NOT_FOUND` | 404 | Owned resource was not found |
+| `AGENT_UNAVAILABLE` | 503 | Agent service is not configured |
+| `AGENT_TIMEOUT` | 504 | Agent did not respond before timeout |
+| `AGENT_ERROR` | 502 | Agent request failed |
 | `INTERNAL_ERROR` | 500 | Unexpected server failure |
-
-
-
-
-
 
